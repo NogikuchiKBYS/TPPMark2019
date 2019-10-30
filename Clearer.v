@@ -1,633 +1,13 @@
-Require Import ZArith Lia.
+Require Import Arith Lia.
 Require Import List.
-Require Import FunInd Recdef.
-Require Import Program.
-Require Import Morphisms Setoid.
+Require Import FunInd.
+
+Require Import TPPMark2019.Value.
+Require Import TPPMark2019.Tape.
+Require Import TPPMark2019.CTM.
+Require Import TPPMark2019.Util.
+
 Set Implicit Arguments.
-Arguments nth_error A l n : simpl nomatch.
-
-Ltac cut_hyp H := lapply H; [clear H; intro H|].
-
-Ltac destruct_cmpb_in_prop P := match P with
-           | context A [?p <=? ?q]  => destruct (Nat.leb_spec p q)
-           | context A [?p <? ?q]  => destruct (Nat.ltb_spec p q)
-           | context A [?p =? ?q]  => destruct (Nat.eqb_spec p q)
-           end.
-  
-Ltac destruct_cmpb :=
-  match goal with
-  | |- ?G => destruct_cmpb_in_prop G
-  | H : ?P |- _ => destruct_cmpb_in_prop P
-  end.
-
-Ltac destruct_cmpbs := repeat destruct_cmpb; auto with zarith.
-
-Lemma nth_error_eq {A} : forall (xs ys : list A), (forall i, nth_error xs i = nth_error ys i) <-> xs = ys.
-Proof.
-  intros.
-  split; intros; subst; auto.
-  revert ys H.
-  induction xs.
-  - destruct ys; auto.
-    intro H.
-    specialize (H 0).
-    inversion H.
-  - destruct ys.
-    + intro H.
-      specialize (H 0).
-      inversion H.
-    + intro H.
-      f_equal.
-      * specialize (H 0).
-        now inversion H.
-      * apply IHxs.
-        intro i.
-        specialize (H (S i)).
-        apply H.
-Qed.
-
-Module Finite.
-  Class class (A : Type) :=
-    {
-      card : nat;
-      surj : nat -> A;
-      surj_spec : forall (x : A), exists i, i < card /\ surj i = x;
-  
-    }.
-End Finite.
-Module Value.
-  Class class (A : Type) `{Finite.class A} :=
-    {
-      eq_dec : forall (x y : A), {x = y} + {x <> y};
-      zero : A;
-      one : A;
-      zero_ne_one : zero <> one;
-    }.
-End Value.
-
-Instance BoolFinite : Finite.class bool :=
-  {|
-    Finite.card := 2;
-    Finite.surj n := n =? 1;
-  |}.
-Proof.
-  destruct x; eauto.
-Defined.
-
-Instance BoolValue : @Value.class bool BoolFinite :=
-  {|
-    Value.zero := false;
-    Value.one := true;
-  |}.
-Proof.
-  - decide equality.
-  - auto.
-Defined.
-
-Module Tape.
-  Class class (A : Type) (V : Type) :=
-    {
-      size: A -> nat;
-      head : A -> nat;
-      read : A -> V;
-      write : V -> A -> A;
-      move_right : A -> A;
-      move_left : A -> A;
-
-      to_list : A -> list V;
-      to_list_size : forall t, size t = length (to_list t);
-      head_spec : forall t, size t <> 0 -> head t < size t;
-      read_spec : forall t, size t <> 0 -> List.nth_error (to_list t) (head t) = Some (read t);
-      write_spec_head : forall v t, size t <> 0 -> List.nth_error (to_list (write v t)) (head t) = Some v;
-      write_spec_other : forall i v t,
-          size t <> 0 ->
-          i <> head t ->
-          List.nth_error (to_list (write v t)) i = List.nth_error (to_list t) i;
-      write_head : forall v t, head (write v t) = head t;
-      move_right_list : forall t, to_list (move_right t) = to_list t;
-      move_right_head : forall t, size t <> 0 -> head (move_right t) = S (head t) mod size t;
-      move_left_list : forall t, to_list (move_left t) = to_list t;
-      move_left_head : forall t, size t <> 0 -> head (move_left t) =
-                            match head t with
-                            | 0 => size t - 1
-                            | S h => h
-                            end
-    }.
-
-  Lemma write_spec : forall A V `{class A V} (tape : A) v i,
-      size tape <> 0 ->
-      List.nth_error (to_list (write v tape)) i =
-      if i =? head tape
-      then (Some v)
-      else List.nth_error (to_list tape) i.
-  Proof.
-    intros.
-    destruct (Nat.eqb_spec i (head tape)); subst.
-    - apply write_spec_head; auto.
-    - apply write_spec_other; auto.
-  Qed.
-  
-  Lemma write_size : forall A V `{class A V} (tape : A) (v : V),
-      size tape <> 0 -> 
-      size (write v tape) = size tape.
-  Proof.
-    intros until v.
-    intro Hnz.
-    enough (forall i, Nat.ltb i (size (write v tape)) = Nat.ltb i (size tape)) as Hltbeq.
-    - revert Hltbeq.
-      generalize (size (write v tape)) as n.
-      generalize (size tape) as m.
-      intros.
-      apply Nat.le_antisymm.
-      + specialize (Hltbeq m).
-        rewrite Nat.ltb_irrefl in Hltbeq.
-        now rewrite Nat.ltb_ge in Hltbeq.
-      + specialize (Hltbeq n).
-        rewrite Nat.ltb_irrefl in Hltbeq.
-        symmetry in Hltbeq.
-        now rewrite Nat.ltb_ge in Hltbeq.
-    - intro i.
-      destruct (List.nth_error (to_list (write v tape)) i) eqn: Heq.
-      + replace (i <? size (write v tape)) with true; symmetry; rewrite Nat.ltb_lt.
-        * destruct (Nat.eq_dec i (head tape)); subst; auto using head_spec.
-          rewrite to_list_size, <- nth_error_Some.
-          rewrite write_spec_other in Heq; congruence.
-        * rewrite to_list_size, <- nth_error_Some.
-          congruence.
-      + replace (i <? size (write v tape)) with false; symmetry;
-          rewrite Nat.ltb_ge, to_list_size, <- nth_error_None; auto.
-        destruct (Nat.eq_dec i (head tape)).
-        * subst. rewrite write_spec_head in Heq; congruence.
-        * rewrite write_spec_other in Heq; congruence.
-  Qed.
-
-  
-  Lemma move_left_size : forall A V `{class A V} (tape : A),
-      size (move_left tape) = size tape.
-  Proof.
-    intros.
-    now rewrite !to_list_size, move_left_list.
-  Qed.
-
-  Lemma move_right_size : forall A V `{class A V} (tape : A),
-      size (move_right tape) = size tape.
-  Proof.
-    intros.
-    now rewrite !to_list_size, move_right_list.
-  Qed.
-
-  Lemma read_write_id : forall A V `{class A V} (tape  : A) (v : V),
-      size tape <> 0 ->
-      v = read tape ->
-      to_list (write v tape) = to_list tape.
-  Proof.
-    intros.
-    apply nth_error_eq.
-    intro i.
-    rewrite write_spec; auto.
-    destruct_cmpbs.
-    pose proof (read_spec tape) as Hread.
-    subst.
-    intuition.
-  Qed.
-
-  Definition replace_at {A} i (xs ys : list A) (v : A) :=
-    exists a l r, length l = i /\ xs = l ++ a :: r /\ ys = l ++ v :: r.
-
-  Lemma skipn_Sn : forall {A} i (xs : list A) (x : A), nth_error xs i = Some x -> skipn i xs = x :: skipn (S i) xs.
-  Proof.
-    intros A i xs x.
-    revert i.
-    induction xs; simpl.
-    - destruct i; inversion 1.
-    - destruct i; simpl in *; try congruence.
-      apply IHxs.
-  Qed.
-
-  Lemma skipn_nth_error :
-    forall {A} s i (xs : list A), nth_error (skipn s xs) i = nth_error xs (s + i).
-  Proof.
-    induction s; intros.
-    - reflexivity.
-    - destruct xs; simpl; auto.
-      destruct i; auto.
-  Qed.
-
-  Lemma firstn_nth_error :
-    forall {A} s i (xs : list A),
-      nth_error (firstn s xs) i =
-      if i <? s
-      then nth_error xs i
-      else None.
-  Proof.
-    induction s; intros.
-    - destruct (Nat.ltb_spec i 0); simpl; try lia.
-      destruct i; auto.
-    - destruct i.
-      + destruct_cmpbs; try lia.
-        destruct xs; auto.
-      + destruct xs; simpl.
-        * destruct Nat.ltb; auto.
-        * rewrite IHs.
-          destruct_cmpbs; auto with zarith; lia.
-  Qed.
-             
-  
-  Lemma write_replace_at : forall A V `{class A V} (tape : A) (v : V),
-      size tape <> 0 ->
-      replace_at (Tape.head tape) (Tape.to_list tape) (Tape.to_list (Tape.write v tape)) v.
-  Proof.
-    intros until v.
-    intro Hsnz.
-    exists (read tape).
-    exists (List.firstn (head tape) (to_list tape)).
-    exists (List.skipn (S (head tape)) (to_list tape)).
-    pose proof (head_spec tape Hsnz) as Hhead.
-    pose Hsnz as Hlennz.
-    rewrite to_list_size in Hhead, Hlennz.
-    split; [| split].
-    - rewrite firstn_length_le; auto with zarith.
-    - rewrite <- (firstn_skipn (head tape) (to_list tape)) at 1.
-      rewrite <- skipn_Sn; auto.
-      now apply read_spec.
-    - rewrite <- (firstn_skipn (head tape) (to_list (write v tape))).
-      replace (firstn (head tape) (to_list tape)) with (firstn (head tape) (to_list (write v tape))).
-      + replace (skipn (S (head tape)) (to_list tape)) with (skipn (S (head tape)) (to_list (write v tape))).
-        * rewrite <- skipn_Sn; auto.
-          now apply write_spec_head.
-        * apply nth_error_eq.
-          intro i.
-          rewrite !skipn_nth_error.
-          apply write_spec_other; auto with zarith.
-      + apply nth_error_eq.
-        intro i.
-        rewrite !firstn_nth_error.
-        destruct_cmpb; auto.
-        apply write_spec_other; auto with zarith.
-  Qed.
-
-  Lemma count_occ_app : forall {A} eq_dec xs ys (v : A),
-      List.count_occ eq_dec (xs ++ ys) v = List.count_occ eq_dec xs v + List.count_occ eq_dec ys v.
-  Proof.
-    intros.
-    induction xs; simpl; auto.
-    destruct eq_dec; simpl; auto.
-  Qed.
-
-  Lemma write_count_occ_ge : forall A V `{class A V} (eq_dec : forall x y, {x = y} + {x <> y}) (tape : A) (v : V),
-      size tape <> 0 ->
-      List.count_occ eq_dec (to_list tape) v <=
-      List.count_occ eq_dec (to_list (Tape.write v tape)) v.
-  Proof.
-    intros.
-    cut (forall i (xs ys : list V),
-            replace_at i xs ys v -> List.count_occ eq_dec xs v <= List.count_occ eq_dec ys v).
-    - intro H'.
-      apply (H'(head tape)); auto using write_replace_at.
-    - intros i xs ys Hrep.
-      destruct Hrep as (a & l & r & Hlen & Hl & Hr).
-      subst.
-      rewrite !count_occ_app.
-      simpl.
-      repeat destruct eq_dec; subst; try congruence; auto with arith.
-  Qed.
-    
-  Lemma write_count_occ_gt : forall A V `{class A V} (eq_dec : forall x y, {x = y} + {x <> y}) (tape : A) (v : V),
-      size tape <> 0 ->
-      read tape <> v ->
-      List.count_occ eq_dec (to_list tape) v <
-      List.count_occ eq_dec (to_list (write v tape)) v.
-  Proof.
-    intros.
-    cut (forall i (xs ys : list V),
-            nth_error xs i <> Some v ->
-            replace_at i xs ys v -> List.count_occ eq_dec xs v < List.count_occ eq_dec ys v).
-    - intro H'.
-      apply (H'(head tape)); auto using write_replace_at.
-      pose proof (read_spec tape) as Hread.
-      cut_hyp Hread; auto.
-      congruence.
-    - intros i xs ys Hne Hrep.
-      destruct Hrep as (a & l & r & Hlen & Hl & Hr).
-      subst.
-      rewrite !count_occ_app.
-      simpl.
-      repeat destruct eq_dec; subst; try congruence; auto with arith.
-      contradict Hne.
-      rewrite nth_error_app2; auto.
-      rewrite Nat.sub_diag.
-      reflexivity.
-  Qed.
-End Tape.
-
-Module FunTape.
-  Record t (V : Type): Type :=
-    {
-      size: nat;
-      head: nat;
-      vs: nat -> V
-    }.
-
-  Arguments size {V} t.
-  Arguments head {V} t.
-  Arguments vs {V} t.
-  
-  Definition modh {V} (tape : t V) : nat := (head tape) mod (size tape).
-
-  Definition read {V} (tape : t V): V :=
-    vs tape (modh tape).
-  Definition write {V} (v : V) (tape : t V) : t V :=
-    {|
-      size := size tape;
-      head := head tape;
-      vs := fun i =>
-             let i := i mod size tape in
-             if Nat.eq_dec i (modh tape)
-             then v
-             else vs tape i
-    |}.
-  Definition move_right {V} (tape : t V) : t V :=
-    {|
-      size := size tape;
-      head := S (head tape) mod (size tape);
-      vs := vs tape
-    |}.
-  Definition move_left {V} (tape : t V) : t V :=
-    {|
-      size := size tape;
-      head :=
-        match head tape with
-        | 0 => size tape - 1
-        | S h => h
-        end;
-      vs := vs tape
-    |}.
-
-  Definition from_list {V} `{Value.class V}  (l : list V) : t V :=
-    {|
-      size := List.length l;
-      head := 0;
-      vs := fun i => nth i l Value.zero
-    |}.
-
-  Definition to_list {V} `{Value.class V} (tape : t V) : list V :=
-    map (vs tape) (seq 0 (size tape)).
-  Transparent to_list.
-End FunTape.
-Hint Resolve Nat.mod_upper_bound.
-
-Lemma map_nth_in_range {A B} (f : A -> B) xs n da db:
-  n < length xs ->
-  nth n (map f xs) db = f (nth n xs da).
-Proof.
-  intro H.
-  rewrite nth_indep with (d' := f da).
-  - apply map_nth.
-  - now rewrite map_length.
-Qed.
-
-Lemma nth_error_nth {A} : forall (l : list A) i d, i < length l -> nth_error l i = Some (nth i l d).
-Proof.
-  induction l; intros.
-  - inversion H.
-  - destruct i; simpl in *; auto.
-    apply IHl.
-    auto with arith.
-Qed.
-
-Lemma nth_error_Some_nth {A} : forall (l : list A) i x d, nth_error l i = Some x -> x = nth i l d.
-Proof.
-  induction l; intros.
-  - destruct i; discriminate.
-  - destruct i; simpl in *; auto.
-    congruence.
-Qed.
-
-Instance FunTape_Tape V `{Value.class V} : Tape.class (FunTape.t V) V :=
-  {|
-    Tape.size := FunTape.size;
-    Tape.head := fun t => FunTape.head t mod FunTape.size t;
-    Tape.read := FunTape.read;
-    Tape.write := FunTape.write;
-    Tape.move_right := FunTape.move_right;
-    Tape.move_left := FunTape.move_left;
-    Tape.to_list := FunTape.to_list;
-  |}.
-Proof.
-  all: intros.
-  all: simpl.
-  all: unfold FunTape.to_list.
-  all:auto.
-  - destruct t; simpl.
-    now rewrite map_length, seq_length.
-  - destruct t; simpl in *.
-    unfold FunTape.modh; simpl.
-    apply map_nth_error.
-    rewrite nth_error_nth with (d := 0).
-    + rewrite seq_nth; auto.
-    + rewrite seq_length; auto.
-  - destruct t.
-    simpl in *.
-    rewrite nth_error_nth with (d := v).
-    + rewrite map_nth_in_range with (da := 0).
-      * destruct Nat.eq_dec; auto.
-        unfold FunTape.modh in *.
-        simpl in *.
-        rewrite seq_nth in *; auto.
-        simpl in *.
-        rewrite Nat.mod_mod in *; auto.
-        congruence.
-      * rewrite seq_length.
-        auto.
-    + rewrite map_length, seq_length.
-      auto.
-  - destruct t. simpl in *.
-    destruct (Nat.ltb_spec i size) as [Hlt | Hge].
-    + rewrite !nth_error_nth with (d := v).
-      * rewrite !map_nth_in_range with (da := 0); try rewrite seq_length; auto.
-        rewrite seq_nth; simpl; auto.
-        rewrite Nat.mod_small; auto.
-        unfold FunTape.modh.
-        simpl.
-        destruct Nat.eq_dec; auto.
-        congruence.
-      * now rewrite map_length, seq_length.
-      * now rewrite map_length, seq_length.
-    + rewrite !(proj2 (nth_error_None _ _)); auto.
-      * now rewrite map_length, seq_length.
-      * now rewrite map_length, seq_length.
-  - destruct t.
-    simpl in *.
-    rewrite Nat.mod_mod; auto.
-    replace (S (head mod size)) with (1 + head mod size); auto.
-    rewrite Nat.add_mod; auto.
-    rewrite Nat.mod_mod; auto.
-    rewrite <- Nat.add_mod; auto.
-  - destruct t; auto; simpl in *.
-    destruct head.
-    + rewrite Nat.mod_0_l; auto.
-      rewrite Nat.mod_small; auto.
-      lia.
-    + remember (S head mod size) as x eqn: Heqx.
-      replace (S head) with (1 + head) in Heqx; auto.
-      rewrite Nat.add_mod in Heqx; auto.
-      destruct x.
-      * destruct (Nat.eq_dec size 1); subst; auto.
-        rewrite Nat.mod_1_l in *; auto with zarith.
-        destruct (Nat.eq_dec (1 + head mod size) size); try lia.
-        rewrite Nat.mod_small in Heqx; try lia.
-        cut (head mod size < size); auto with zarith.
-      * assert (1 < size) as Hgt. {
-           destruct (Nat.eq_dec size 1); try lia.
-           subst.
-           discriminate.
-        }
-        rewrite Nat.mod_1_l in Heqx; auto.
-        simpl in *.
-        rewrite Nat.mod_small in Heqx; try lia.
-        destruct (Nat.eq_dec (S (head mod size)) size) as [Heq | Hne].
-        -- rewrite Heq in *.
-           rewrite Nat.mod_same in Heqx; lia.
-        -- cut (head mod size < size); auto with zarith.
-Qed.
-
-Inductive Move := MoveL | MoveR.
-
-Section TM.
-  Variable V : Type.
-  Context `{Value.class V}.
-  Variable State : Type.
-  Context `{Finite.class State}.
-  Variable T : Type.
-  Context `{Tape.class T V}.
-  
-  Record Machine :=
-    {
-      init_state : State;
-      transition : State -> V -> (V * Move * option State);
-      
-    }.
-
-  Record TMState :=
-    {
-      tape : T;
-      state : option State;
-    }.
-
-  Definition start (machine : Machine) (tape : T) : TMState :=
-    {|
-      tape := tape;
-      state := Some (init_state machine);
-    |}.
-      
-
-  Definition step (machine : Machine) (tms : TMState) : TMState :=
-    let '{|tape:=tape; state:=state|} := tms in
-    match state with
-    | None => tms
-    | Some state =>
-      let '(v, m, s) := transition machine state (Tape.read tape) in
-      let tape := Tape.write v tape in
-      let tape :=
-          match m with
-          | MoveL => Tape.move_left tape
-          | MoveR => Tape.move_right tape
-          end in
-      {| tape := tape; state := s |}
-    end.
-  Functional Scheme step_ind := Induction for step Sort Prop.
-
-  Lemma step_tape_size : forall machine tms,
-      Tape.size (tape tms) <> 0 ->
-      Tape.size (tape (step machine tms)) = Tape.size (tape tms).
-  Proof.
-    intros.
-    destruct tms as [tape state].
-    simpl in *.
-    destruct state; simpl; auto.
-    destruct transition as [[v m] state].
-    destruct m; simpl.
-    - rewrite !Tape.to_list_size.
-      rewrite Tape.move_left_list.
-      rewrite <- !Tape.to_list_size.
-      now apply Tape.write_size.
-    - rewrite !Tape.to_list_size.
-      rewrite Tape.move_right_list.
-      rewrite <- !Tape.to_list_size.
-      now apply Tape.write_size.
-  Qed.
-      
-  
-  Fixpoint steps (n : nat) (machine : Machine) (tms : TMState) : TMState :=
-    match n with
-    | O => tms
-    | S n' => steps n' machine (step machine tms)
-    end.
-
-  Lemma steps_1 : forall machine tms, steps 1 machine tms = step machine tms.
-  Proof.
-    reflexivity.
-  Qed.
-
-  Lemma steps_add : forall n m machine tms,
-      steps n machine (steps m machine tms) = steps (n + m) machine tms.
-  Proof.
-    induction m; intros.
-    - rewrite Nat.add_0_r.
-      reflexivity.
-    - rewrite Nat.add_succ_r.
-      simpl.
-      auto.
-  Qed.
-
-  Definition Steps n machine tms tms' := steps n machine tms = tms'.
-
-  Inductive Halts : Machine -> TMState -> Prop :=
-  | halts_halted : forall machine tms, state tms = None -> Halts machine tms
-  | halts_step : forall machine tms, Halts machine (step machine tms) -> Halts machine tms.
-
-  Lemma Halts_steps : forall machine tms,
-      Halts machine tms <->
-      exists n, state (steps n machine tms) = None.
-  Proof.
-    split; intro HH.
-    - induction HH.
-      + exists 0.
-        auto.
-      + destruct IHHH as (n & IHHH).
-        exists (S n).
-        auto.
-    - destruct HH as (n & HH).
-      revert tms HH.
-      induction n; simpl.
-      + apply halts_halted. 
-      + auto using halts_step.
-  Qed.
-
-  Definition HaltWith machine tape tape' :=
-    exists n, steps n machine (start machine tape) = {| state := None; tape := tape' |}.
-
-  Lemma HaltWith_Halts : forall machine tape_init, (exists tape', HaltWith machine tape_init tape') <-> Halts machine (start machine tape_init).
-  Proof.
-    intros machine tape_init.
-    split; intro HH.
-    - destruct HH as (tms & n & Heq).
-      rewrite Halts_steps.
-      exists n.
-      rewrite Heq.
-      reflexivity.
-    - rewrite Halts_steps in HH.
-      destruct HH as [n Heq].
-      exists (tape (steps n machine (start machine tape_init))).
-      unfold HaltWith.
-      exists n.
-      destruct (steps n machine (start machine tape_init)).
-      simpl in *.
-      congruence.
-  Qed.
-  
-End TM.
-
 
 Section Clear.
   Variable V : Type.
@@ -662,46 +42,46 @@ Section Clear.
     decide equality.
   Defined.
 
-  Definition clearer_trans (s : State) (v : V) : (V * Move * option State) :=
+  Definition clearer_trans (s : State) (v : V) : (V * CTM.Move * option State) :=
     match s with
-    | Init0 => (Value.one, MoveR, Some Init1)
-    | Init1 => (Value.one, MoveR, Some Clear)
+    | Init0 => (Value.one, CTM.MoveR, Some Init1)
+    | Init1 => (Value.one, CTM.MoveR, Some Clear)
     | Clear =>
       if Value.eq_dec v Value.one
-      then (Value.zero, MoveL, Some Back)
-      else (Value.zero, MoveR, Some Clear)
+      then (Value.zero, CTM.MoveL, Some Back)
+      else (Value.zero, CTM.MoveR, Some Clear)
     | Back =>
       if Value.eq_dec v Value.zero
-      then (v, MoveL, Some Back)
-      else (v, MoveL, Some Look)
+      then (v, CTM.MoveL, Some Back)
+      else (v, CTM.MoveL, Some Look)
     | Look =>
       if Value.eq_dec v Value.zero
-      then (v, MoveR, Some Finish)
-      else (v, MoveR, Some Skip)
-    | Skip => (v, MoveR, Some Clear)
+      then (v, CTM.MoveR, Some Finish)
+      else (v, CTM.MoveR, Some Skip)
+    | Skip => (v, CTM.MoveR, Some Clear)
     | Finish =>
-      (Value.zero, MoveR, None)
+      (Value.zero, CTM.MoveR, None)
     end.
   Functional Scheme clearer_trans_ind := Induction for clearer_trans Sort Prop.
   
-  Definition clearer : Machine V State :=
+  Definition clearer : CTM.Machine V State :=
     {|
-      init_state := Init0;
-      transition := clearer_trans;
+      CTM.init_state := Init0;
+      CTM.transition := clearer_trans;
     |}.
 
   Definition zero_except_ix1 (l : list V) :=
     List.nth_error l 1 = Some Value.one /\
     forall i, i < List.length l -> i <> 1 -> List.nth_error l i = Some Value.zero.
 
-  Definition measure (tms :TMState State T) : nat :=
-    Tape.size (tape tms) - 
-    List.count_occ Value.eq_dec (Tape.to_list (tape tms)) Value.zero.
+  Definition measure (tms :CTM.TMState State T) : nat :=
+    Tape.size (CTM.tape tms) - 
+    List.count_occ Value.eq_dec (Tape.to_list (CTM.tape tms)) Value.zero.
 
 
-  Definition PreCondition (tms : TMState State T) : Prop :=
-    let state := state tms in
-    let tape := tape tms in
+  Definition PreCondition (tms : CTM.TMState State T) : Prop :=
+    let state := CTM.state tms in
+    let tape := CTM.tape tms in
     let l := Tape.to_list tape in
     match state with
     | Some Init0 => Tape.head tape = 0
@@ -735,12 +115,12 @@ Section Clear.
       forall v, In v l -> v = Value.zero
     end.
 
-  Definition PostCondition (tms tms': TMState State T) : Prop :=
-    match state tms with
+  Definition PostCondition (tms tms': CTM.TMState State T) : Prop :=
+    match CTM.state tms with
     | Some Init0 => True
     | Some Init1 => True
     | Some Clear =>
-      match state tms' with
+      match CTM.state tms' with
       | Some Back => measure tms' < measure tms
       | _ => measure tms' <= measure tms
       end
@@ -754,8 +134,8 @@ Section Clear.
     | None => True
     end.
 
-  Definition Valid (tms : TMState State T) :=
-    2 < Tape.size (tape tms) /\ PreCondition tms.
+  Definition Valid (tms : CTM.TMState State T) :=
+    2 < Tape.size (CTM.tape tms) /\ PreCondition tms.
 
   
   Hint Rewrite
@@ -767,10 +147,10 @@ Section Clear.
     : tape.
 
   Lemma start_Valid : forall tape,
-      2 < Tape.size tape -> Tape.head tape = 0 -> Valid (start clearer tape).
+      2 < Tape.size tape -> Tape.head tape = 0 -> Valid (CTM.start clearer tape).
   Proof.
     intros.
-    unfold Valid, start.
+    unfold Valid, CTM.start.
     simpl.
     auto.
   Qed.
@@ -797,7 +177,7 @@ Section Clear.
     rewrite Nat.mod_same in *; lia.
   Qed.
 
-  Lemma step_Valid : forall tms, Valid tms -> Valid (step clearer tms).
+  Lemma step_Valid : forall tms, Valid tms -> Valid (CTM.step clearer tms).
   Proof.
     intros [tape state] HV.
     unfold Valid in *.
@@ -807,7 +187,7 @@ Section Clear.
     }
     split.
     {
-      rewrite step_tape_size; auto with zarith.
+      rewrite CTM.step_tape_size; auto with zarith.
     } {
       destruct HV as [Hsz HPC].
       simpl in *.
@@ -997,7 +377,7 @@ Section Clear.
     }
   Qed.
   
-  Lemma steps_Valid : forall n tms, Valid tms -> Valid (steps n clearer tms).
+  Lemma steps_Valid : forall n tms, Valid tms -> Valid (CTM.steps n clearer tms).
   Proof.
     induction n; intros; simpl; auto using step_Valid.
   Qed.
@@ -1016,7 +396,7 @@ Section Clear.
     lia.
   Qed.
 
-  Lemma step_PostCondition : forall tms, Valid tms -> PostCondition tms (step clearer tms).
+  Lemma step_PostCondition : forall tms, Valid tms -> PostCondition tms (CTM.step clearer tms).
   Proof.
     intros [tape state] HV.
     unfold Valid in *.
@@ -1050,8 +430,8 @@ Section Clear.
 
   Lemma look_unreachable_from_finish_halt :
     forall n tms,
-      state (steps n clearer tms) = Some Look ->
-      match state tms with
+      CTM.state (CTM.steps n clearer tms) = Some Look ->
+      match CTM.state tms with
       | Some Finish | None => False
       | _ => True
       end.
@@ -1062,7 +442,7 @@ Section Clear.
     - intros tms.
       simpl.
       intro Hstate.
-      remember (step clearer tms) as tms' eqn: Heqtms'.
+      remember (CTM.step clearer tms) as tms' eqn: Heqtms'.
       destruct tms as [tape state].
       simpl in *.
       destruct state.
@@ -1111,8 +491,8 @@ Section Clear.
   Lemma state_escape :
     forall tms,
       Valid tms ->
-      match state tms with
-      | Some s => exists n s', Trans1 s s' /\ state (steps n clearer tms) = s' /\ s' <> state tms
+      match CTM.state tms with
+      | Some s => exists n s', Trans1 s s' /\ CTM.state (CTM.steps n clearer tms) = s' /\ s' <> CTM.state tms
       | _ => True
       end.
   Proof.
@@ -1127,14 +507,14 @@ Section Clear.
       revert tape HValid Heqh Heqsz.
       induction h as [h IH] using (well_founded_induction (Nat.gt_wf sz)).
       intros tape HValid Heqh Heqsz.
-      remember {| tape := tape; state := Some Clear |} as tms eqn: Heqtms.
-      remember (step clearer tms) as tms' eqn: Heqtms'def.
+      remember {| CTM.tape := tape; CTM.state := Some Clear |} as tms eqn: Heqtms.
+      remember (CTM.step clearer tms) as tms' eqn: Heqtms'def.
       pose proof Heqtms'def as Heqtms'.
       rewrite Heqtms in Heqtms'.
       simpl in Heqtms'.
       destruct Value.eq_dec in Heqtms'.
       + exists 1, (Some Back).
-        rewrite steps_1, <- Heqtms'def, Heqtms'.
+        rewrite CTM.steps_1, <- Heqtms'def, Heqtms'.
         simpl.
         repeat split; try congruence.
         solve_trans1.
@@ -1168,7 +548,7 @@ Section Clear.
              }
              rewrite Heq in *.
              destruct Hi'; congruence.
-        * assert (Tape.head (Top.tape tms') = S h) as Hheadeq. {
+        * assert (Tape.head (CTM.tape tms') = S h) as Hheadeq. {
             rewrite Heqtms'.
             simpl.
             repeat autorewrite with tape; auto with zarith.
@@ -1178,7 +558,7 @@ Section Clear.
           }
           specialize (IH (S h)).
           cut_hyp IH.
-          -- specialize (IH (Top.tape tms')).
+          -- specialize (IH (CTM.tape tms')).
              destruct IH as [k IHk]; auto.
              ++ rewrite <- Heqtms'def in HValid'.
                clear Heqtms'def.
@@ -1207,10 +587,11 @@ Section Clear.
       revert tape HValid Heqh.
       induction h as [|h]; intros tape HValid Heqh.
       + unfold Valid, PreCondition in HValid; simpl in HValid.
-        intuition.
-      + remember {| tape := tape; state := Some Back |} as tms eqn: Htms.
-        remember (step clearer tms) as tms'.
-        specialize (IHh (Top.tape tms')).
+        exists 1, (Some Look).
+        lia.
+      + remember {| CTM.tape := tape; CTM.state := Some Back |} as tms eqn: Htms.
+        remember (CTM.step clearer tms) as tms'.
+        specialize (IHh (CTM.tape tms')).
         destruct h.
         * exists 1.
           simpl.
@@ -1237,7 +618,7 @@ Section Clear.
              ++ subst.
                now simpl.
              ++ subst.
-               simpl Top.tape.
+               simpl CTM.tape.
                rewrite Tape.move_left_head.
                ** rewrite Tape.write_head.
                   now rewrite <- Heqh.
@@ -1246,7 +627,7 @@ Section Clear.
                   rewrite Tape.write_size; auto with zarith.
              ++ exists (S n).
                rewrite <- Htms.
-               simpl steps.
+               simpl CTM.steps.
                rewrite Htms.
                simpl.
                destruct Value.eq_dec; try congruence.
@@ -1354,13 +735,13 @@ Section Clear.
 
   Lemma look_or_halt :
     forall tms, Valid tms -> exists n,
-        match state (steps (S n) clearer tms) with
+        match CTM.state (CTM.steps (S n) clearer tms) with
         | None | Some Look => True
         | _ => False
         end.
   Proof.
     intro tms.
-    remember (state tms) as state eqn: Heqstate.
+    remember (CTM.state tms) as state eqn: Heqstate.
     revert tms Heqstate.
     induction state as [state IH] using (well_founded_induction wf_StateOrder).
     intros tms Heqstate HValid.
@@ -1380,11 +761,11 @@ Section Clear.
             now subst.
           * specialize (IH (Some s')).
             cut_hyp IH.
-            -- specialize (IH (steps (S n) clearer tms)).
+            -- specialize (IH (CTM.steps (S n) clearer tms)).
                cut_hyp IH; auto.
                cut_hyp IH; auto using steps_Valid.
                destruct IH as [m IH].
-               rewrite steps_add in IH.
+               rewrite CTM.steps_add in IH.
                simpl in IH.
                exists (m + S n).
                assumption.
@@ -1402,9 +783,9 @@ Section Clear.
   Lemma measure_decrease :
     forall n tms tms',
       Valid tms ->
-      tms' = steps (S n) clearer tms ->
-      state tms' = Some Look ->
-      match state tms with
+      tms' = CTM.steps (S n) clearer tms ->
+      CTM.state tms' = Some Look ->
+      match CTM.state tms with
       | Some Look | Some Skip | Some Clear => measure tms' < measure tms
       | Some Back => measure tms' <= measure tms
       | _ => True
@@ -1427,9 +808,9 @@ Section Clear.
       pose proof (step_PostCondition HValid) as HPost.
       simpl in Htms'.
       simpl in *.
-      specialize (IHn (step clearer tms) tms').
+      specialize (IHn (CTM.step clearer tms) tms').
       repeat (cut_hyp IHn; auto using step_Valid).
-      remember (step clearer tms) as tms_next eqn: Hnext in *.
+      remember (CTM.step clearer tms) as tms_next eqn: Hnext in *.
       destruct tms as [tape state].
       simpl in *.
       remember (Tape.read tape) as v eqn: Heqnv.
@@ -1450,69 +831,69 @@ Section Clear.
 
   Lemma look_halts : forall tms,
       Valid tms ->
-      state tms = Some Look ->
-      Halts clearer tms.
+      CTM.state tms = Some Look ->
+      CTM.Halts clearer tms.
   Proof.
     induction tms as [tms IH] using (induction_ltof1 _ measure).
     intros HValid HLook.
     destruct (look_or_halt HValid) as [n Hn].
-    remember (steps (S n) clearer tms) as tms' eqn: Hdeftms'.
+    remember (CTM.steps (S n) clearer tms) as tms' eqn: Hdeftms'.
     specialize (IH tms').
     destruct tms' as [tape' state'] eqn: Heqtms'. rewrite <- Heqtms' in *.
     rewrite Heqtms' in Hn.
     destruct state' as [state' |].
     - destruct state'; simpl in Hn; try tauto.
       cut_hyp IH.
-      + rewrite Halts_steps in *.
+      + rewrite CTM.Halts_steps in *.
         destruct IH as [m Hm].
         * rewrite Hdeftms'.
           apply steps_Valid.
           assumption.
         * now subst.
-        * rewrite Hdeftms', steps_add in Hm.
+        * rewrite Hdeftms', CTM.steps_add in Hm.
           eauto.
       + pose proof (@measure_decrease n tms tms' HValid Hdeftms') as Hlt.
         cut_hyp Hlt.
         * now rewrite HLook in Hlt.
         * subst; auto.
-    - rewrite Halts_steps.
+    - rewrite CTM.Halts_steps.
       exists (S n).
       now rewrite <- Hdeftms', Heqtms'.
   Qed.
 
   Lemma valid_clearer_halt : forall tms,
       Valid tms ->
-      Halts clearer tms.
+      CTM.Halts clearer tms.
   Proof.
     intros tms HValid.
     destruct (look_or_halt HValid) as [n Hn].
-    destruct (state (steps (S n) clearer tms)) as [state|] eqn: Hstate.
+    destruct (CTM.state (CTM.steps (S n) clearer tms)) as [state|] eqn: Hstate.
     - destruct state; try tauto.
-      pose proof (@look_halts (steps (S n) clearer tms)) as HHalt.
+      pose proof (@look_halts (CTM.steps (S n) clearer tms)) as HHalt.
       cut_hyp HHalt; auto using steps_Valid.
-      rewrite Halts_steps in *.
+      rewrite CTM.Halts_steps in *.
       destruct HHalt as [m Hm]; auto.
-      rewrite steps_add in Hm.
+      rewrite CTM.steps_add in Hm.
       eauto.
-    - rewrite Halts_steps.
+    - rewrite CTM.Halts_steps.
       eauto.
   Qed.
 
   Theorem clear_and_halt :
     forall tape : T,
       2 < Tape.size tape -> Tape.head tape = 0 ->
-      exists tape', HaltWith clearer tape tape' /\ (forall v, In v (Tape.to_list tape') -> v = Value.zero).
+      exists tape', CTM.HaltWith clearer tape tape' /\ (forall v, In v (Tape.to_list tape') -> v = Value.zero).
   Proof.
     intro tape.
     intros Hsize Hhead.
     pose proof (start_Valid _ Hsize Hhead) as HValid.
     pose proof (valid_clearer_halt HValid) as HHalt.
-    rewrite <- HaltWith_Halts in HHalt.
+    rewrite <- CTM.HaltWith_Halts in HHalt.
     destruct HHalt as [tape' Htape'].
     exists tape'.
     split; auto.
     intros v Hv.
-    unfold HaltWith in Htape'.
+    unfold CTM.HaltWith in Htape'.
     destruct Htape' as [n Hn].
     pose proof (steps_Valid n HValid) as HValid'.
     rewrite Hn in HValid'.
