@@ -135,7 +135,7 @@ Section Clear.
     end.
 
   Definition Valid (tms : CTM.TMState State T) :=
-    2 < Tape.size (CTM.tape tms) /\ PreCondition tms.
+    1 < Tape.size (CTM.tape tms) /\ PreCondition tms.
 
   
   Hint Rewrite
@@ -147,7 +147,7 @@ Section Clear.
     : tape.
 
   Lemma start_Valid : forall tape,
-      2 < Tape.size tape -> Tape.head tape = 0 -> Valid (CTM.start clearer tape).
+      1 < Tape.size tape -> Tape.head tape = 0 -> Valid (CTM.start clearer tape).
   Proof.
     intros.
     unfold Valid, CTM.start.
@@ -203,7 +203,9 @@ Section Clear.
       - repeat autorewrite with tape; try lia.
         destruct HPC as [-> HPC].
         split.
-        + rewrite Nat.mod_small; auto.
+        + destruct (Nat.eq_dec (Tape.size tape) 2) as [-> |].
+          * rewrite Nat.mod_same; auto.
+          * rewrite Nat.mod_small; lia.
         + destruct_cmpbs; try congruence.
           * split; auto. split; auto.
             intros i (Hle & Hlt).
@@ -214,7 +216,9 @@ Section Clear.
                apply mod0_large; auto.
           * split; auto. split; auto.
             intros i (Hle & Hlt).
-            rewrite Nat.mod_small in *; lia.
+            destruct (Nat.eq_dec (Tape.size tape) 2) as [Heq |].
+            -- rewrite Heq in *; simpl in *; congruence.
+            -- rewrite Nat.mod_small in *; lia.
       - repeat autorewrite with tape; try lia.
         destruct HPC as (Hh & Hi0 & Hi1 & Hr).
         split.
@@ -354,7 +358,8 @@ Section Clear.
         repeat autorewrite with tape; try lia.
         destruct HPC as [-> HPC].
         split.
-        + rewrite Nat.mod_small; auto.
+        + destruct (Nat.eq_dec (Tape.size tape) 2) as [->|]; simpl; auto.
+          rewrite Nat.mod_small; lia.
         + destruct_cmpbs; try congruence.
           * split; try tauto. split; try tauto.
             intros i (Hle & Hlt).
@@ -363,7 +368,10 @@ Section Clear.
             rewrite Nat.mod_small in *; lia.
           * split; try tauto. split; try tauto.
             intros i (Hle & Hlt).
-            rewrite Nat.mod_small in *; lia.
+            rewrite Nat.mod_small in *; try lia.
+            cut (Tape.size tape <> 2); try lia.
+            intro Heq. rewrite Heq in *.
+            simpl in *. lia.
       - intros v (i & Hi)%In_nth_error.
         autorewrite with tape in *; auto.
         destruct_cmpbs; subst; try congruence.
@@ -881,7 +889,7 @@ Section Clear.
 
   Theorem clear_and_halt :
     forall tape : T,
-      2 < Tape.size tape -> Tape.head tape = 0 ->
+      1 < Tape.size tape -> Tape.head tape = 0 ->
       exists tape', CTM.HaltWith clearer tape tape' /\ (forall v, In v (Tape.to_list tape') -> v = Value.zero).
   Proof.
     intro tape.
