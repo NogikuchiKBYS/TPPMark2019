@@ -9,6 +9,8 @@ Require Import TPPMark2019.Util.
 
 Set Implicit Arguments.
 
+Ltac easy_lia := easy || lia.
+
 Section Clear.
   Variable V : Type.
   Context `{Value.class V}.
@@ -171,10 +173,10 @@ Section Clear.
     rewrite Nat.mod_1_l in *; auto.
     rewrite Nat.mod_small in Heq; auto.
     pose proof (Nat.mod_upper_bound n m) as Hub.
-    cut (1 + (n mod m) <> m); try lia.
+    cut (1 + (n mod m) <> m); try easy_lia.
     intro Heq'.
     rewrite Heq' in *.
-    rewrite Nat.mod_same in *; lia.
+    rewrite Nat.mod_same in *; easy_lia.
   Qed.
 
   Lemma step_Valid : forall tms, Valid tms -> Valid (CTM.step clearer tms).
@@ -194,46 +196,46 @@ Section Clear.
       destruct state eqn: Hstate; [|simpl in *; auto].
       remember (Tape.read tape) as v.
       functional induction (clearer_trans s v); unfold PreCondition in *; simpl in *.
-      - repeat autorewrite with tape; try lia.
+      - repeat autorewrite with tape; try easy_lia.
         split.
         + rewrite HPC.
           rewrite Nat.mod_1_l; auto with arith.
         + destruct_cmpbs; auto.
           congruence.
-      - repeat autorewrite with tape; try lia.
+      - repeat autorewrite with tape; try easy_lia.
         destruct HPC as [-> HPC].
         split.
         + destruct (Nat.eq_dec (Tape.size tape) 2) as [-> |].
           * rewrite Nat.mod_same; auto.
-          * rewrite Nat.mod_small; lia.
+          * rewrite Nat.mod_small; easy_lia.
         + destruct_cmpbs; try congruence.
           * split; auto. split; auto.
             intros i (Hle & Hlt).
-            autorewrite with tape; try lia.
+            autorewrite with tape; try easy_lia.
             destruct_cmpbs; subst; auto.
-            -- rewrite Nat.mod_small in *; lia.
-            -- assert (Tape.size tape <= 2); try lia.
+            -- rewrite Nat.mod_small in *; easy_lia.
+            -- assert (Tape.size tape <= 2); try easy_lia.
                apply mod0_large; auto.
           * split; auto. split; auto.
             intros i (Hle & Hlt).
             destruct (Nat.eq_dec (Tape.size tape) 2) as [Heq |].
             -- rewrite Heq in *; simpl in *; congruence.
-            -- rewrite Nat.mod_small in *; lia.
-      - repeat autorewrite with tape; try lia.
+            -- rewrite Nat.mod_small in *; easy_lia.
+      - repeat autorewrite with tape; try easy_lia.
         destruct HPC as (Hh & Hi0 & Hi1 & Hr).
         split.
         + destruct (Tape.head tape); auto.
-          lia.
-        + destruct_cmpbs; try lia.
+          easy_lia.
+        + destruct_cmpbs; try easy_lia.
           * right.
             unfold zero_except_ix1.
             rewrite <- Tape.to_list_size.
-            repeat autorewrite with tape; try lia.
-            destruct_cmpbs; try lia.
+            repeat autorewrite with tape; try easy_lia.
+            destruct_cmpbs; try easy_lia.
             split; auto.
             intro i.
-            repeat autorewrite with tape; try lia.
-            destruct_cmpbs; try lia.
+            repeat autorewrite with tape; try easy_lia.
+            destruct_cmpbs; try easy_lia.
           * left.
             split; auto.
             split; auto.
@@ -248,41 +250,41 @@ Section Clear.
           rewrite <- Tape.read_spec; auto.
           now rewrite Hhead0.
         }
-        repeat autorewrite with tape; try lia.
+        repeat autorewrite with tape; try easy_lia.
         destruct HPC as (Hh & Hi0 & Hi1 &  Hr).
         split.
         + intro Heq.
-          apply mod_S_inj in Heq; try lia.
+          apply mod_S_inj in Heq; try easy_lia.
           apply mod0_large in Heq; auto.
           pose proof (Tape.head_spec tape).
-          lia.
+          easy_lia.
         + destruct_cmpbs; try congruence.
           * split; auto. split; auto.
             intros i Hrange.
             autorewrite with tape; auto.
             destruct_cmpbs; auto.
             apply Hr; split; try tauto.
-            replace (Tape.head tape) with (Tape.size tape - 1) in *; try lia.
+            replace (Tape.head tape) with (Tape.size tape - 1) in *; try easy_lia.
             assert (Tape.size tape <= S (Tape.head tape)); auto using mod0_large.
             pose proof (Tape.head_spec tape).
-            lia.
+            easy_lia.
           * split; auto. split; auto.
             intros i Hrange.
             autorewrite with tape; auto.
             destruct_cmpbs; auto.
             apply Hr; split; try tauto.
-            rewrite Nat.mod_small in Hrange; try lia.
+            rewrite Nat.mod_small in Hrange; try easy_lia.
             pose proof (Tape.head_spec tape).
-            enough (Tape.head tape <> Tape.size tape - 1); try lia.
+            enough (Tape.head tape <> Tape.size tape - 1); try easy_lia.
             intro Heq.
             rewrite Heq in *.
-            replace (S (Tape.size tape - 1)) with (Tape.size tape) in *; try lia.
+            replace (S (Tape.size tape - 1)) with (Tape.size tape) in *; try easy_lia.
             rewrite Nat.mod_same in *; congruence.
       - rewrite Tape.move_left_list.
         rewrite !Tape.read_write_id; auto.
         repeat autorewrite with tape; auto.
         split.
-        + destruct (Tape.head tape) eqn: Heq; try lia.
+        + destruct (Tape.head tape) eqn: Heq; try easy_lia.
           intro. subst.
           apply Value.zero_ne_one.
           pose proof (Tape.read_spec tape) as Hread.
@@ -295,7 +297,7 @@ Section Clear.
           intro i.
           destruct (Tape.head tape) eqn: Heq; intuition.
       - assert (Tape.head tape = 1) as Hhead. {
-          cut (~ 2 <= Tape.head tape); try lia.
+          cut (~ 2 <= Tape.head tape); try easy_lia.
           intro Hge2.
           destruct HPC as [Hhead [(Hi0 & Hi1 & Hi) | Hze]]; auto.
           - specialize (Hi (Tape.head tape)).
@@ -307,7 +309,7 @@ Section Clear.
             specialize (Hi (Tape.head tape)).
             cut_hyp Hi.
             + pose proof (Tape.read_spec tape) as Hread.
-              cut_hyp Hi; try lia.
+              cut_hyp Hi; try easy_lia.
               cut_hyp Hread; congruence.
             + rewrite <- Tape.to_list_size.
               now apply Tape.head_spec.
@@ -323,7 +325,7 @@ Section Clear.
         rewrite Hhead.
         tauto.
       - rewrite Tape.move_right_list, Tape.read_write_id; auto.
-        repeat autorewrite with tape; try lia.
+        repeat autorewrite with tape; try easy_lia.
         destruct HPC as [Heq [[Hcontra] | Hze]].
         + exfalso.
           apply Value.zero_ne_one.
@@ -338,7 +340,7 @@ Section Clear.
             destruct Hze as [Hi1 Hi].
             split; auto.
       - rewrite Tape.move_right_list, Tape.read_write_id; auto.
-        repeat autorewrite with tape; try lia.
+        repeat autorewrite with tape; try easy_lia.
         destruct HPC as [Heq Hi].
         rewrite Heq in *.
         split.
@@ -355,23 +357,23 @@ Section Clear.
             rewrite Hread; congruence.
           * rewrite <- Tape.to_list_size. auto with zarith.
       - rewrite Tape.move_right_list, Tape.read_write_id; auto.
-        repeat autorewrite with tape; try lia.
+        repeat autorewrite with tape; try easy_lia.
         destruct HPC as [-> HPC].
         split.
         + destruct (Nat.eq_dec (Tape.size tape) 2) as [->|]; simpl; auto.
-          rewrite Nat.mod_small; lia.
+          rewrite Nat.mod_small; easy_lia.
         + destruct_cmpbs; try congruence.
           * split; try tauto. split; try tauto.
             intros i (Hle & Hlt).
-            autorewrite with tape; try lia.
+            autorewrite with tape; try easy_lia.
             destruct_cmpbs; subst; auto.
-            rewrite Nat.mod_small in *; lia.
+            rewrite Nat.mod_small in *; easy_lia.
           * split; try tauto. split; try tauto.
             intros i (Hle & Hlt).
-            rewrite Nat.mod_small in *; try lia.
-            cut (Tape.size tape <> 2); try lia.
+            rewrite Nat.mod_small in *; try easy_lia.
+            cut (Tape.size tape <> 2); try easy_lia.
             intro Heq. rewrite Heq in *.
-            simpl in *. lia.
+            simpl in *. easy_lia.
       - intros v (i & Hi)%In_nth_error.
         autorewrite with tape in *; auto.
         destruct_cmpbs; subst; try congruence.
@@ -393,7 +395,7 @@ Section Clear.
   Lemma sub_mono : forall x y z, y < z <= x -> x - z < x - y.
   Proof.
     intros.
-    lia.
+    easy_lia.
   Qed.
 
   Lemma count_occ_length : forall A dec (xs : list A) a, count_occ dec xs a <= length xs.
@@ -401,7 +403,7 @@ Section Clear.
     intros.
     induction xs; simpl; auto.
     destruct dec; subst; auto.
-    lia.
+    easy_lia.
   Qed.
 
   Lemma step_PostCondition : forall tms, Valid tms -> PostCondition tms (CTM.step clearer tms).
@@ -433,7 +435,7 @@ Section Clear.
         congruence.
     - repeat autorewrite with tape; auto.
       pose proof (Tape.write_count_occ_ge Value.eq_dec tape Value.zero).
-      lia.
+      easy_lia.
   Qed.
 
   Lemma look_unreachable_from_finish_halt :
@@ -562,7 +564,7 @@ Section Clear.
             repeat autorewrite with tape; auto with zarith.
             rewrite Nat.mod_small; auto.
             pose proof (Tape.head_spec tape).
-            lia.
+            easy_lia.
           }
           specialize (IH (S h)).
           cut_hyp IH.
@@ -596,7 +598,7 @@ Section Clear.
       induction h as [|h]; intros tape HValid Heqh.
       + unfold Valid, PreCondition in HValid; simpl in HValid.
         exists 1, (Some Look).
-        lia.
+        easy_lia.
       + remember {| CTM.tape := tape; CTM.state := Some Back |} as tms eqn: Htms.
         remember (CTM.step clearer tms) as tms'.
         specialize (IHh (CTM.tape tms')).
