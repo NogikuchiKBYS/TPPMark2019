@@ -225,23 +225,23 @@ Section Clear.
         + destruct (Tape.head tape); auto.
           lia.
         + destruct_cmpbs; try lia.
-          right.
-          unfold zero_except_ix1.
-          rewrite <- Tape.to_list_size.
-          repeat autorewrite with tape; try lia.
-          destruct_cmpbs; try lia.
-          split; auto.
-          intro i.
-          repeat autorewrite with tape; try lia.
-          destruct_cmpbs; try lia.
-          left.
-          split; auto.
-          split; auto.
-          intro i.
-          destruct (Tape.head tape) eqn: Heq; try congruence.
-          intro Hrange.
-          repeat autorewrite with tape; auto.
-          destruct_cmpbs.
+          * right.
+            unfold zero_except_ix1.
+            rewrite <- Tape.to_list_size.
+            repeat autorewrite with tape; try lia.
+            destruct_cmpbs; try lia.
+            split; auto.
+            intro i.
+            repeat autorewrite with tape; try lia.
+            destruct_cmpbs; try lia.
+          * left.
+            split; auto.
+            split; auto.
+            intro i.
+            destruct (Tape.head tape) eqn: Heq; try congruence.
+            intro Hrange.
+            repeat autorewrite with tape; auto.
+            destruct_cmpbs.
       - assert (Tape.head tape <> 0). {
           intro Hhead0.
           enough (Some (Tape.read tape) = Some Value.one); try congruence.
