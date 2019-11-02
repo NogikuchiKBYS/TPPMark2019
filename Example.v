@@ -166,11 +166,20 @@ Proof.
       * now rewrite map_length, seq_length.
   - destruct t.
     simpl in *.
+    destruct size as [|s]; try congruence.
     rewrite Nat.mod_mod; auto.
-    replace (S (head mod size)) with (1 + head mod size); auto.
+    replace (S head) with (1 + head); try reflexivity.
     rewrite Nat.add_mod; auto.
-    rewrite Nat.mod_mod; auto.
-    rewrite <- Nat.add_mod; auto.
+    destruct (Nat.eqb_spec (head mod S s) s) as [Heq | ].
+    + destruct s; auto.
+      rewrite Nat.mod_1_l, Heq; try lia.
+      rewrite Nat.mod_same; auto.
+    + destruct s. simpl.
+      * rewrite Nat.mod_1_r in *. congruence.
+      * rewrite Nat.mod_1_l; auto with zarith.
+        rewrite Nat.mod_small; auto.
+        pose proof (Nat.mod_upper_bound head (S (S s))).
+        auto with zarith.
   - destruct t; auto; simpl in *.
     destruct head.
     + rewrite Nat.mod_0_l; auto.
