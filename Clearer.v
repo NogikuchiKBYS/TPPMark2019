@@ -1,5 +1,5 @@
 Require Import Arith Lia.
-Require Import List.
+Require Import List Bool.
 Require Import FunInd.
 
 Require Import TPPMark2019.Value.
@@ -72,51 +72,93 @@ Section Clear.
       CTM.transition := clearer_trans;
     |}.
 
-  Definition zero_except_ix1 (l : list V) :=
-    List.nth_error l 1 = Some Value.one /\
-    forall i, i < List.length l -> i <> 1 -> List.nth_error l i = Some Value.zero.
-
   Definition measure (tms :CTM.TMState State T) : nat :=
     Tape.size (CTM.tape tms) - 
     List.count_occ Value.eq_dec (Tape.to_list (CTM.tape tms)) Value.zero.
 
+  Definition NthCondition {A} (P : nat -> A -> Prop) (l : list A) := forall i v, List.nth_error l i = Some v -> P i v.
 
-  Definition PreCondition (tms : CTM.TMState State T) : Prop :=
-    let state := CTM.state tms in
-    let tape := CTM.tape tms in
+  Lemma NthCondition_elem {A} : forall (P : nat -> A -> Prop) (l : list A),
+      NthCondition P l -> forall i, i < length l -> exists v, List.nth_error l i = Some v /\ P i v.
+  Proof.
+    intros P l HNC i Hlt.
+    destruct (nth_error l i) as [v|] eqn: Heqv.
+    - exists v.
+      split; auto.
+    - rewrite List.nth_error_None in Heqv.
+      lia.
+  Qed.
+  
+  Lemma NthCondition' {A} (P : nat -> A -> Prop) (l : list A) :
+    (forall i v, i < length l -> List.nth_error l i = Some v -> P i v) -> NthCondition P l.
+  Proof.
+    intro Hi.
+    intros i v Heq.
+    apply Hi; auto.
+    apply List.nth_error_Some.
+    congruence.
+  Qed.
+
+  Definition zero_except_ix1 : list V -> Prop :=
+    NthCondition
+      (fun i v =>
+         if i =? 1
+         then v = Value.one
+         else v = Value.zero).
+  
+
+  Definition HeadPreCondition (state : option State) (h : nat) :=
+    match state with
+    | Some Init0 => h = 0
+    | Some Init1 => h = 1
+    | Some Clear => h <> 1
+    | Some Back => h <> 0
+    | Some Look => h = 0
+    | Some Skip => h = 1
+    | Some Finish => h = 1
+    | None => True
+    end.
+
+  Definition TapePreCondition (state : option State) (tape : T) :=
     let l := Tape.to_list tape in
     match state with
-    | Some Init0 => Tape.head tape = 0
+    | Some Init0 => True
     | Some Init1 =>
-      Tape.head tape = 1 /\
-      List.nth_error l 0 = Some Value.one
+      NthCondition (fun i v => if i =? 0 then v = Value.one else True) l
     | Some Clear =>
-      Tape.head tape <> 1 /\
-      List.nth_error l 0 = Some Value.one /\
-      List.nth_error l 1 = Some Value.one /\
-      if Tape.head tape =? 0
-      then forall i, 2 <= i < Tape.size tape -> List.nth_error l i = Some Value.zero
-      else forall i, 2 <= i < Tape.head tape -> List.nth_error l i = Some Value.zero
+      NthCondition (fun i v =>
+                      if (i =? 0) || (i =? 1)
+                      then v = Value.one
+                      else if (Tape.head tape =? 0) || (i <? Tape.head tape)
+                           then v = Value.zero
+                           else True) l
     | Some Back =>
-      Tape.head tape <> 0 /\
-      ((List.nth_error l 0 = Some Value.one /\ List.nth_error l 1 = Some Value.one /\
-        forall i, 2 <= i <= Tape.head tape -> List.nth_error l i = Some Value.zero) \/
-      zero_except_ix1 l)
-    | Some Look =>
-      Tape.head tape = 0 /\
-      ((List.nth_error l 0 = Some Value.one /\ List.nth_error l 1 = Some Value.one) \/
+      (NthCondition
+         (fun i v =>
+            if (i =? 0) || (i =? 1)
+            then v = Value.one
+            else if i <=? Tape.head tape
+                 then v = Value.zero
+                 else True) l \/
        zero_except_ix1 l)
+    | Some Look =>
+      (NthCondition
+         (fun i v =>
+            if (i =? 0) || (i =? 1)
+            then v = Value.one
+            else True) l \/ zero_except_ix1 l)
     | Some Skip =>
-      Tape.head tape = 1 /\
-      List.nth_error l 0 = Some Value.one /\
-      List.nth_error l 1 = Some Value.one
+      NthCondition
+        (fun i v =>
+           if (i =? 0) || (i =? 1)
+           then v = Value.one
+           else True) l
     | Some Finish => 
-      Tape.head tape = 1 /\
       zero_except_ix1 l
     | None => 
       forall v, In v l -> v = Value.zero
     end.
-
+  
   Definition PostCondition (tms tms': CTM.TMState State T) : Prop :=
     match CTM.state tms with
     | Some Init0 => True
@@ -137,7 +179,9 @@ Section Clear.
     end.
 
   Definition Valid (tms : CTM.TMState State T) :=
-    1 < Tape.size (CTM.tape tms) /\ PreCondition tms.
+    let tape := CTM.tape tms in
+    let state := CTM.state tms in
+    1 < Tape.size tape /\ HeadPreCondition state (Tape.head tape) /\ TapePreCondition state tape.
 
   
   Hint Rewrite
@@ -147,6 +191,7 @@ Section Clear.
        Tape.write_size Tape.move_left_size Tape.move_right_size
        Tape.write_spec
     : tape.
+
 
   Lemma start_Valid : forall tape,
       1 < Tape.size tape -> Tape.head tape = 0 -> Valid (CTM.start clearer tape).
@@ -179,213 +224,137 @@ Section Clear.
     rewrite Nat.mod_same in *; easy_lia.
   Qed.
 
+  Lemma step_HeadPreCondition : forall tms tms',
+      tms' = CTM.step clearer tms ->
+      Valid tms -> HeadPreCondition (CTM.state tms') (Tape.head (CTM.tape tms')).
+  Proof.
+    intros tms tms' Heq_tms' HValid.
+    destruct HValid as (Hsize & HHPC & HTPC).
+    destruct tms as [tape state] eqn: Heq_tms.
+    simpl in *.
+    assert (Tape.size tape <> 0) as Htnonempty; try easy_lia.
+    destruct state as [state | ]; simpl in Heq_tms'; [| rewrite Heq_tms'; simpl; auto].
+    remember (Tape.read tape) as v eqn: Hdef_v.
+    pose proof (Tape.read_spec tape Htnonempty) as Hread.
+    functional induction (clearer_trans state v); rewrite Heq_tms'; simpl.
+    all: unfold HeadPreCondition, TapePreCondition, zero_except_ix1 in *.
+    all: repeat autorewrite with tape; auto.
+    all: try rewrite HHPC.
+    all: destruct_cmpbs.
+    all: destruct (Tape.head tape) as [|h] eqn:Heqh; try easy_lia.
+    - apply HTPC in Hread.
+      congruence.
+    - intro. subst.
+      apply Value.zero_ne_one.
+      destruct HTPC as [HTPC | HTPC]; apply HTPC in Hread; congruence.
+    - destruct h as [|h]; auto.
+      destruct HTPC as [HTPC | HTPC]; apply HTPC in Hread; simpl in Hread; try congruence.
+      rewrite Nat.leb_refl in Hread.
+      congruence.
+  Qed.
+
+  Lemma step_TapePreCondition : forall tms tms',
+      tms' = CTM.step clearer tms ->
+      Valid tms -> TapePreCondition (CTM.state tms') (CTM.tape tms').
+  Proof.
+    intros tms tms' Heq_tms' HValid.
+    pose proof (@step_HeadPreCondition tms tms' Heq_tms' HValid) as Hhead.
+    destruct HValid as (Hsize & HHPC & HTPC).
+    destruct tms as [tape state] eqn: Heq_tms.
+
+    simpl in Hsize.
+    assert (Tape.size tape <> 0) as Htnonempty; try solve [simpl in *; easy_lia].
+    pose proof (Tape.read_spec tape Htnonempty) as Hread.
+    revert Hhead.
+    pose proof Heq_tms' as Hdef_tms'.
+    destruct state as [state | ]; simpl in Heq_tms'; [| rewrite Heq_tms'; simpl; auto].
+    remember (Tape.read tape) as v eqn: Hdef_v.
+    pose proof (CTM.step_tape_size clearer tms) as Hsize'.
+    rewrite Heq_tms, <- Hdef_tms' in Hsize'.
+    simpl in Hsize'.
+    cut_hyp Hsize'; auto.
+    rewrite <- Heq_tms in Hdef_tms'.
+    functional induction (clearer_trans state v).
+    all: rewrite Heq_tms' in Hsize' |- *.
+    all: unfold HeadPreCondition, TapePreCondition, zero_except_ix1 in *; simpl in *.
+    all: try apply HTPC in Hread.
+    all: repeat autorewrite with tape; auto.
+    all: intro Hhead.
+    - intros i v. autorewrite with tape; auto.
+      destruct_cmpbs; congruence.
+    - rewrite HHPC in *.
+      intros i v Hread'.
+      autorewrite with tape in Hread'; auto.
+      rewrite HHPC in Hread'.
+      destruct (Nat.eqb_spec i 0), (Nat.eqb_spec i 1); try congruence.
+      + simpl in *.
+        apply HTPC in Hread'.
+        now subst.
+      + pose proof (HTPC _ _ Hread') as Hread''.
+        destruct (Nat.eqb_spec i 0); try congruence.
+        destruct (Nat.eqb_spec 2 (Tape.size tape)) as [Heq|]; simpl in *; auto.
+        * apply Tape.nth_error_Some in Hread'.
+          easy_lia.
+        * destruct (Nat.ltb_spec i 2); easy_lia.
+    - destruct (Tape.head tape) as [|h] eqn: Heqh; [right | left];
+        intros i v; autorewrite with tape; auto; destruct_cmpbs; simpl in *; try easy_lia;
+          intros Hread'%HTPC; subst; simpl in Hread'; destruct_cmpbs; easy_lia.
+    - intros i v Hread'.
+      pose proof (Tape.nth_error_Some _ _ Hread') as Hlti.
+      autorewrite with tape in Hread', Hlti; auto.
+      destruct (Nat.eqb_spec i (Tape.head tape)) as [Heqi |].
+      + rewrite <- Heqi in *.
+        destruct (i =? 0), (i =? 1); simpl in Hread; simpl; try congruence.
+        destruct_cmpbs; simpl; auto.
+      + apply HTPC in Hread'.
+        destruct (i =? 0), (i =? 1); simpl in Hread'; auto.
+        destruct_cmpbs; simpl in *; easy_lia.
+    - rewrite Tape.read_write_id; auto.
+      destruct HTPC as [HTPC | HTPC]; [left | right]; auto.
+      intros i v Hread'.
+      apply HTPC in Hread'.
+      destruct_cmpbs; simpl in *; auto.
+      destruct (Tape.head tape); try easy_lia.
+    - rewrite Tape.read_write_id; auto.
+      destruct HTPC as [HTPC | HTPC]; [left | right]; auto.
+      intros i v Hread'.
+      apply HTPC in Hread'.
+      destruct orb; auto.
+    - rewrite Tape.read_write_id; auto.
+      destruct HTPC as [HTPC | HTPC]; auto.
+      exfalso.
+      pose proof (Tape.read_spec tape) as Hread'.
+      apply HTPC in Hread'; auto.
+      rewrite HHPC, Nat.eqb_refl in Hread'.
+      simpl in Hread'.
+      pose proof (Value.zero_ne_one); congruence.
+    - rewrite Tape.read_write_id; auto.
+      destruct HTPC as [HTPC | HTPC]; auto.
+      pose proof (Tape.read_spec tape) as Hread'.
+      rewrite HHPC in Hread'.
+      apply HTPC in Hread'; congruence.
+    - rewrite Tape.read_write_id; auto.
+      intros i v Hread'.
+      pose proof (Tape.nth_error_Some _ _ Hread') as Hlti.
+      apply HTPC in Hread'.
+      destruct_cmpbs; simpl in *; easy_lia.
+    - intros v (i & Hread')%In_nth_error.
+      autorewrite with tape in Hread'; auto.
+      destruct_cmpbs.
+      apply HTPC in Hread'.
+      destruct_cmpbs.
+  Qed.
+
+  
   Lemma step_Valid : forall tms, Valid tms -> Valid (CTM.step clearer tms).
   Proof.
-    intros [tape state] HV.
-    unfold Valid in *.
-    assert (Tape.size tape <> 0) as Hnonempty. {
-      simpl in *.
-      auto with zarith.
-    }
+    intros tms HValid.
     split.
-    {
+    - destruct HValid as [Hsize _].
       rewrite CTM.step_tape_size; auto with zarith.
-    } {
-      destruct HV as [Hsz HPC].
-      simpl in *.
-      destruct state eqn: Hstate; [|simpl in *; auto].
-      remember (Tape.read tape) as v.
-      functional induction (clearer_trans s v); unfold PreCondition in *; simpl in *.
-      - repeat autorewrite with tape; try easy_lia.
-        split.
-        + rewrite HPC.
-          rewrite Nat.mod_1_l; auto with arith.
-        + destruct_cmpbs; auto.
-          congruence.
-      - repeat autorewrite with tape; try easy_lia.
-        destruct HPC as [-> HPC].
-        split.
-        + destruct (Nat.eq_dec (Tape.size tape) 2) as [-> |].
-          * rewrite Nat.mod_same; auto.
-          * rewrite Nat.mod_small; easy_lia.
-        + destruct_cmpbs; try congruence.
-          * split; auto. split; auto.
-            intros i (Hle & Hlt).
-            autorewrite with tape; try easy_lia.
-            destruct_cmpbs; subst; auto.
-            -- rewrite Nat.mod_small in *; easy_lia.
-            -- assert (Tape.size tape <= 2); try easy_lia.
-               apply mod0_large; auto.
-          * split; auto. split; auto.
-            intros i (Hle & Hlt).
-            destruct (Nat.eq_dec (Tape.size tape) 2) as [Heq |].
-            -- rewrite Heq in *; simpl in *; congruence.
-            -- rewrite Nat.mod_small in *; easy_lia.
-      - repeat autorewrite with tape; try easy_lia.
-        destruct HPC as (Hh & Hi0 & Hi1 & Hr).
-        split.
-        + destruct (Tape.head tape); auto.
-          easy_lia.
-        + destruct_cmpbs; try easy_lia.
-          * right.
-            unfold zero_except_ix1.
-            rewrite <- Tape.to_list_size.
-            repeat autorewrite with tape; try easy_lia.
-            destruct_cmpbs; try easy_lia.
-            split; auto.
-            intro i.
-            repeat autorewrite with tape; try easy_lia.
-            destruct_cmpbs; try easy_lia.
-          * left.
-            split; auto.
-            split; auto.
-            intro i.
-            destruct (Tape.head tape) eqn: Heq; try congruence.
-            intro Hrange.
-            repeat autorewrite with tape; auto.
-            destruct_cmpbs.
-      - assert (Tape.head tape <> 0). {
-          intro Hhead0.
-          enough (Some (Tape.read tape) = Some Value.one); try congruence.
-          rewrite <- Tape.read_spec; auto.
-          now rewrite Hhead0.
-        }
-        repeat autorewrite with tape; try easy_lia.
-        destruct HPC as (Hh & Hi0 & Hi1 &  Hr).
-        split.
-        + intro Heq.
-          apply mod_S_inj in Heq; try easy_lia.
-          apply mod0_large in Heq; auto.
-          pose proof (Tape.head_spec tape).
-          easy_lia.
-        + destruct_cmpbs; try congruence.
-          * split; auto. split; auto.
-            intros i Hrange.
-            autorewrite with tape; auto.
-            destruct_cmpbs; auto.
-            apply Hr; split; try tauto.
-            replace (Tape.head tape) with (Tape.size tape - 1) in *; try easy_lia.
-            assert (Tape.size tape <= S (Tape.head tape)); auto using mod0_large.
-            pose proof (Tape.head_spec tape).
-            easy_lia.
-          * split; auto. split; auto.
-            intros i Hrange.
-            autorewrite with tape; auto.
-            destruct_cmpbs; auto.
-            apply Hr; split; try tauto.
-            rewrite Nat.mod_small in Hrange; try easy_lia.
-            pose proof (Tape.head_spec tape).
-            enough (Tape.head tape <> Tape.size tape - 1); try easy_lia.
-            intro Heq.
-            rewrite Heq in *.
-            replace (S (Tape.size tape - 1)) with (Tape.size tape) in *; try easy_lia.
-            rewrite Nat.mod_same in *; congruence.
-      - rewrite Tape.move_left_list.
-        rewrite !Tape.read_write_id; auto.
-        repeat autorewrite with tape; auto.
-        split.
-        + destruct (Tape.head tape) eqn: Heq; try easy_lia.
-          intro. subst.
-          apply Value.zero_ne_one.
-          pose proof (Tape.read_spec tape) as Hread.
-          rewrite Heq in *.
-          cut_hyp Hread; auto.
-          unfold zero_except_ix1 in HPC.
-          intuition; congruence.
-        + destruct HPC as [Hhead [(Hi0 & Hi1 & Hi) | Hze]]; auto.
-          left. split; auto. split; auto.
-          intro i.
-          destruct (Tape.head tape) eqn: Heq; intuition.
-      - assert (Tape.head tape = 1) as Hhead. {
-          cut (~ 2 <= Tape.head tape); try easy_lia.
-          intro Hge2.
-          destruct HPC as [Hhead [(Hi0 & Hi1 & Hi) | Hze]]; auto.
-          - specialize (Hi (Tape.head tape)).
-            cut_hyp Hi; auto.
-            pose proof (Tape.read_spec tape) as Hread.
-            cut_hyp Hread; congruence.
-          - unfold zero_except_ix1 in Hze.
-            destruct Hze as [_ Hi].
-            specialize (Hi (Tape.head tape)).
-            cut_hyp Hi.
-            + pose proof (Tape.read_spec tape) as Hread.
-              cut_hyp Hi; try easy_lia.
-              cut_hyp Hread; congruence.
-            + rewrite <- Tape.to_list_size.
-              now apply Tape.head_spec.
-        }
-        assert (Tape.read tape = Value.one) as Hread. {
-          pose proof (Tape.read_spec tape) as Hread.
-          cut_hyp Hread; auto.
-          rewrite Hhead in *.
-          destruct HPC as [_ [(Hi0 & Hi1 & Hi) | [Hi1 _]]]; congruence.
-        }
-        rewrite Tape.move_left_list, Tape.read_write_id; auto.
-        repeat autorewrite with tape; auto.
-        rewrite Hhead.
-        tauto.
-      - rewrite Tape.move_right_list, Tape.read_write_id; auto.
-        repeat autorewrite with tape; try easy_lia.
-        destruct HPC as [Heq [[Hcontra] | Hze]].
-        + exfalso.
-          apply Value.zero_ne_one.
-          pose proof (Tape.read_spec tape) as Hread.
-          rewrite Heq in *.
-          rewrite Hread in Hcontra; auto.
-          congruence.
-        + rewrite Heq in *.
-          split.
-          * rewrite Nat.mod_1_l; auto with arith.
-          * unfold zero_except_ix1 in *.
-            destruct Hze as [Hi1 Hi].
-            split; auto.
-      - rewrite Tape.move_right_list, Tape.read_write_id; auto.
-        repeat autorewrite with tape; try easy_lia.
-        destruct HPC as [Heq Hi].
-        rewrite Heq in *.
-        split.
-        + rewrite Nat.mod_1_l; auto with arith.
-        + destruct_cmpbs; try congruence.
-          destruct Hi as [Hi | Hi]; try tauto.
-          destruct Hi as [Hi1 Hi].
-          specialize (Hi 0).
-          cut_hyp Hi.
-          * cut_hyp Hi; auto.
-            contradict Hi.
-            pose proof (Tape.read_spec tape) as Hread.
-            rewrite Heq in *.
-            rewrite Hread; congruence.
-          * rewrite <- Tape.to_list_size. auto with zarith.
-      - rewrite Tape.move_right_list, Tape.read_write_id; auto.
-        repeat autorewrite with tape; try easy_lia.
-        destruct HPC as [-> HPC].
-        split.
-        + destruct (Nat.eq_dec (Tape.size tape) 2) as [->|]; simpl; auto.
-          rewrite Nat.mod_small; easy_lia.
-        + destruct_cmpbs; try congruence.
-          * split; try tauto. split; try tauto.
-            intros i (Hle & Hlt).
-            autorewrite with tape; try easy_lia.
-            destruct_cmpbs; subst; auto.
-            rewrite Nat.mod_small in *; easy_lia.
-          * split; try tauto. split; try tauto.
-            intros i (Hle & Hlt).
-            rewrite Nat.mod_small in *; try easy_lia.
-            cut (Tape.size tape <> 2); try easy_lia.
-            intro Heq. rewrite Heq in *.
-            simpl in *. easy_lia.
-      - intros v (i & Hi)%In_nth_error.
-        autorewrite with tape in *; auto.
-        destruct_cmpbs; subst; try congruence.
-        destruct HPC as [Heq Hze].
-        rewrite Heq in *.
-        apply proj2 in Hze.
-        specialize (Hze i).
-        rewrite Hze in Hi; try congruence.
-        rewrite <- nth_error_Some.
-        congruence.
-    }
+    - eauto using step_HeadPreCondition, step_TapePreCondition.
   Qed.
+
   
   Lemma steps_Valid : forall n tms, Valid tms -> Valid (CTM.steps n clearer tms).
   Proof.
@@ -498,6 +467,7 @@ Section Clear.
                                     split; [unfold Trans1; exists v; auto|]; split; try congruence
                                                                                           
     end.
+  
   Lemma state_escape :
     forall tms,
       Valid tms ->
@@ -529,7 +499,7 @@ Section Clear.
         repeat split; try congruence.
         solve_trans1.
       + pose proof (step_Valid HValid) as HValid'.
-        unfold Valid, PreCondition in HValid; rewrite Heqtms in HValid; simpl in *.
+        unfold Valid, HeadPreCondition, TapePreCondition in HValid; rewrite Heqtms in HValid; simpl in *.
         destruct HValid as (Hsize & Hhead & Hi).
         destruct (Nat.eq_dec h (sz - 1)).
         * specialize (IH 0).
@@ -546,7 +516,7 @@ Section Clear.
              pose proof (Value.zero_ne_one); try congruence.
              pose proof (Tape.read_spec tape') as Hread.
              rewrite <- Heqtms'def, Heqtms' in HValid'.
-             unfold Valid, PreCondition in HValid'; simpl in HValid'.
+             unfold Valid, HeadPreCondition, TapePreCondition in HValid'; simpl in HValid'.
              destruct HValid' as (Hsize' & Hhead' & Hi').
              cut_hyp Hread; auto with zarith.
              assert (Tape.head tape' = 0) as Heq. {
@@ -554,17 +524,17 @@ Section Clear.
                repeat autorewrite with tape; auto with zarith.
                rewrite <- Heqh.
                subst.
-               replace (S (Tape.head tape)) with (Tape.size tape); try rewrite Nat.mod_same; auto with zarith.
+               destruct_cmpbs.
              }
              rewrite Heq in *.
-             destruct Hi'; congruence.
+             apply Hi' in Hread.
+             simpl in Hread.
+             congruence.
         * assert (Tape.head (CTM.tape tms') = S h) as Hheadeq. {
             rewrite Heqtms'.
             simpl.
             repeat autorewrite with tape; auto with zarith.
-            rewrite Nat.mod_small; auto.
-            pose proof (Tape.head_spec tape).
-            easy_lia.
+            destruct_cmpbs.
           }
           specialize (IH (S h)).
           cut_hyp IH.
@@ -591,12 +561,14 @@ Section Clear.
              simpl.
              subst.
              repeat autorewrite with tape; auto with zarith.
+             destruct_cmpbs.
              apply Nat.lt_le_incl.
+             pose proof (Tape.head_spec tape).
              auto with zarith.
     - remember (Tape.head tape) as h.
       revert tape HValid Heqh.
       induction h as [|h]; intros tape HValid Heqh.
-      + unfold Valid, PreCondition in HValid; simpl in HValid.
+      + unfold Valid, HeadPreCondition, TapePreCondition in HValid; simpl in HValid.
         exists 1, (Some Look).
         easy_lia.
       + remember {| CTM.tape := tape; CTM.state := Some Back |} as tms eqn: Htms.
@@ -609,14 +581,22 @@ Section Clear.
           simpl.
           destruct Value.eq_dec; simpl; try congruence.
           -- exfalso.
-          unfold Valid, PreCondition in HValid; rewrite Htms in *; simpl in HValid.
-          rewrite <- Heqh in *.
-          pose proof Value.zero_ne_one.
-          pose proof (Tape.read_spec tape) as Hread.
-          cut_hyp Hread; auto with zarith.
-          cut (nth_error (Tape.to_list tape) 1 = Some Value.one); try congruence.
-          unfold zero_except_ix1 in HValid.
-          intuition.
+             unfold Valid, HeadPreCondition, TapePreCondition in HValid; rewrite Htms in *; simpl in HValid.
+             rewrite <- Heqh in *.
+             pose proof Value.zero_ne_one.
+             pose proof (Tape.read_spec tape) as Hread.
+             cut_hyp Hread; auto with zarith.
+             cut (nth_error (Tape.to_list tape) 1 = Some Value.one); try congruence.
+             unfold zero_except_ix1 in HValid.
+             destruct HValid as (Hsize & _ & [HNC | HNC]).
+             ++ apply NthCondition_elem with (i := 1) in HNC.
+               ** destruct HNC as (v & Hnth & Hv).
+                  congruence.
+               ** now rewrite <- Tape.to_list_size.
+             ++ apply NthCondition_elem with (i := 1) in HNC.
+               ** destruct HNC as (v & Hnth & Hv).
+                  congruence.
+               ** now rewrite <- Tape.to_list_size.
           -- exists (Some Look).
              repeat split; try congruence || solve_trans1.
         * pose proof (step_Valid HValid) as HValid'.
@@ -643,23 +623,16 @@ Section Clear.
                destruct Value.eq_dec; try congruence.
                subst.
                assumption.
-          -- unfold Valid, PreCondition in HValid; simpl in HValid.
+          -- unfold Valid, HeadPreCondition, TapePreCondition in HValid; simpl in HValid.
              cut (Tape.read tape = Value.zero); try congruence.
              pose proof (Tape.read_spec tape) as Hread.
              cut_hyp Hread; auto with zarith.
              rewrite <- Heqh in *.
              destruct HValid as (Hlen & _ & [Hi | Hi]).
-             ++ destruct Hi as (_ & _ & Hi).
-               specialize (Hi (S (S h))).
-               cut_hyp Hi; auto with arith.
-               congruence.
-             ++ destruct Hi as [_ Hi].
-               specialize (Hi (S (S h))).
-               cut_hyp Hi; auto with arith.
-               ** cut_hyp Hi; auto. congruence.
-               ** rewrite <- Tape.to_list_size.
-                  pose proof (Tape.head_spec tape).
-                  auto with zarith.
+             ++ apply Hi in Hread.
+               destruct_cmpbs; easy_lia.
+             ++ apply Hi in Hread.
+               destruct_cmpbs.
     - exists 1.
       simpl.
       destruct Value.eq_dec; simpl.
@@ -907,7 +880,7 @@ Section Clear.
     destruct Htape' as [n Hn].
     pose proof (steps_Valid n HValid) as HValid'.
     rewrite Hn in HValid'.
-    unfold Valid, PreCondition in HValid'; simpl in HValid'.
+    unfold Valid, HeadPreCondition, TapePreCondition in HValid'; simpl in HValid'.
     intuition.
   Qed.
 End Clear.

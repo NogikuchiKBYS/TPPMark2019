@@ -48,7 +48,11 @@ Module Tape.
           List.nth_error (to_list (write v t)) i = List.nth_error (to_list t) i;
       write_head : forall v t, head (write v t) = head t;
       move_right_list : forall t, to_list (move_right t) = to_list t;
-      move_right_head : forall t, size t <> 0 -> head (move_right t) = S (head t) mod size t;
+      move_right_head : forall t, size t <> 0 ->
+                             head (move_right t) =
+                             if S (head t) =? size t
+                             then 0
+                             else S (head t);
       move_left_list : forall t, to_list (move_left t) = to_list t;
       move_left_head : forall t, size t <> 0 -> head (move_left t) =
                             match head t with
@@ -56,6 +60,16 @@ Module Tape.
                             | S h => h
                             end
     }.
+
+  Lemma nth_error_Some : forall A V `{class A V} (tape : A) i v,
+      nth_error (Tape.to_list tape) i = Some v -> i < Tape.size tape.
+  Proof.
+    intros until v.
+    intro.
+    rewrite to_list_size.
+    rewrite <- List.nth_error_Some.
+    congruence.
+  Qed.
 
   Lemma write_spec : forall A V `{class A V} (tape : A) v i,
       size tape <> 0 ->
@@ -93,9 +107,9 @@ Module Tape.
       destruct (List.nth_error (to_list (write v tape)) i) eqn: Heq.
       + replace (i <? size (write v tape)) with true; symmetry; rewrite Nat.ltb_lt.
         * destruct (Nat.eq_dec i (head tape)); subst; auto using head_spec.
-          rewrite to_list_size, <- nth_error_Some.
+          rewrite to_list_size, <- List.nth_error_Some.
           rewrite write_spec_other in Heq; congruence.
-        * rewrite to_list_size, <- nth_error_Some.
+        * rewrite to_list_size, <- List.nth_error_Some.
           congruence.
       + replace (i <? size (write v tape)) with false; symmetry;
           rewrite Nat.ltb_ge, to_list_size, <- nth_error_None; auto.
@@ -261,4 +275,5 @@ Module Tape.
       rewrite Nat.sub_diag.
       reflexivity.
   Qed.
+
 End Tape.

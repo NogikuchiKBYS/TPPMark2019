@@ -16,5 +16,5 @@ Ltac destruct_cmpb :=
   | H : ?P |- _ => destruct_cmpb_in_prop P
   end.
 
-Ltac destruct_cmpbs := repeat destruct_cmpb; auto with zarith.
+Ltac destruct_cmpbs := repeat (destruct_cmpb; try congruence; auto with zarith).
 Hint Resolve Nat.mod_upper_bound.
