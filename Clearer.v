@@ -1,5 +1,5 @@
 Require Import Arith Lia.
-Require Import List.
+Require Import List Bool.
 Require Import FunInd.
 
 Require Import TPPMark2019.Value.
@@ -80,43 +80,62 @@ Section Clear.
     Tape.size (CTM.tape tms) - 
     List.count_occ Value.eq_dec (Tape.to_list (CTM.tape tms)) Value.zero.
 
+  Definition NthCondition {A} (P : nat -> A -> Prop) (l : list A) := forall i v, List.nth_error l i = Some v -> P i v.
 
-  Definition PreCondition (tms : CTM.TMState State T) : Prop :=
-    let state := CTM.state tms in
-    let tape := CTM.tape tms in
+
+  Definition HeadPreCondition (state : option State) (h : nat) :=
+    match state with
+    | Some Init0 => h = 0
+    | Some Init1 => h = 1
+    | Some Clear => h <> 1
+    | Some Back => h <> 0
+    | Some Look => h = 0
+    | Some Skip => h = 1
+    | Some Finish => h = 1
+    | None => True
+    end.
+
+  Definition TapePreCondition (state : option State) (tape : T) :=
     let l := Tape.to_list tape in
     match state with
-    | Some Init0 => Tape.head tape = 0
+    | Some Init0 => True
     | Some Init1 =>
-      Tape.head tape = 1 /\
-      List.nth_error l 0 = Some Value.one
+      NthCondition (fun i v => if i =? 0 then v = Value.one else True) l
     | Some Clear =>
-      Tape.head tape <> 1 /\
-      List.nth_error l 0 = Some Value.one /\
-      List.nth_error l 1 = Some Value.one /\
       if Tape.head tape =? 0
-      then forall i, 2 <= i < Tape.size tape -> List.nth_error l i = Some Value.zero
-      else forall i, 2 <= i < Tape.head tape -> List.nth_error l i = Some Value.zero
+      then NthCondition (fun i v =>
+                           if (i =? 0) || (i =? 1)
+                           then v = Value.one
+                           else v = Value.zero) l
+      else NthCondition (fun i v =>
+                           if (i =? 0) || (i =? 1)
+                           then v = Value.one
+                           else i < Tape.head tape -> v = Value.zero) l
     | Some Back =>
-      Tape.head tape <> 0 /\
-      ((List.nth_error l 0 = Some Value.one /\ List.nth_error l 1 = Some Value.one /\
-        forall i, 2 <= i <= Tape.head tape -> List.nth_error l i = Some Value.zero) \/
-      zero_except_ix1 l)
-    | Some Look =>
-      Tape.head tape = 0 /\
-      ((List.nth_error l 0 = Some Value.one /\ List.nth_error l 1 = Some Value.one) \/
+      (NthCondition
+         (fun i v =>
+            if (i =? 0) || (i =? 1)
+            then v = Value.one
+            else i <= Tape.head tape -> v = Value.zero) l \/
        zero_except_ix1 l)
+    | Some Look =>
+      (NthCondition
+         (fun i v =>
+            if (i =? 0) || (i =? 1)
+            then v = Value.one
+            else True) l \/ zero_except_ix1 l)
     | Some Skip =>
-      Tape.head tape = 1 /\
-      List.nth_error l 0 = Some Value.one /\
-      List.nth_error l 1 = Some Value.one
+      (NthCondition
+         (fun i v =>
+            if (i =? 0) || (i =? 1)
+            then v = Value.one
+            else True) l \/ zero_except_ix1 l)
     | Some Finish => 
-      Tape.head tape = 1 /\
       zero_except_ix1 l
     | None => 
       forall v, In v l -> v = Value.zero
     end.
-
+  
   Definition PostCondition (tms tms': CTM.TMState State T) : Prop :=
     match CTM.state tms with
     | Some Init0 => True
@@ -137,7 +156,9 @@ Section Clear.
     end.
 
   Definition Valid (tms : CTM.TMState State T) :=
-    1 < Tape.size (CTM.tape tms) /\ PreCondition tms.
+    let tape := CTM.tape tms in
+    let state := CTM.state tms in
+    1 < Tape.size tape /\ HeadPreCondition state (Tape.head tape) /\ TapePreCondition state tape.
 
   
   Hint Rewrite
@@ -148,6 +169,7 @@ Section Clear.
        Tape.write_spec
     : tape.
 
+(*
   Lemma start_Valid : forall tape,
       1 < Tape.size tape -> Tape.head tape = 0 -> Valid (CTM.start clearer tape).
   Proof.
@@ -156,7 +178,7 @@ Section Clear.
     simpl.
     auto.
   Qed.
-
+*)
   Lemma mod0_large : forall n m, n <> 0 -> m <> 0 -> n mod m = 0 -> m <= n.
   Proof.
     intros n m Hn Hm Hmod.
@@ -177,6 +199,58 @@ Section Clear.
     intro Heq'.
     rewrite Heq' in *.
     rewrite Nat.mod_same in *; easy_lia.
+  Qed.
+
+  Lemma step_HeadPreCondition : forall tms tms',
+      tms' = CTM.step clearer tms ->
+      Valid tms -> HeadPreCondition (CTM.state tms') (Tape.head (CTM.tape tms')).
+  Proof.
+    intros tms tms' Heq_tms' HValid.
+    destruct HValid as (Hsize & HHPC & HTPC).
+    destruct tms as [tape state] eqn: Heq_tms.
+    simpl in *.
+    assert (Tape.size tape <> 0) as Htnonempty; try easy_lia.
+    destruct state as [state | ]; simpl in Heq_tms'; [| rewrite Heq_tms'; simpl; auto].
+    remember (Tape.read tape) as v eqn: Hdef_v.
+    functional induction (clearer_trans state v); rewrite Heq_tms'; simpl.
+    all: unfold HeadPreCondition, TapePreCondition in *.
+    all: repeat autorewrite with tape; auto.
+    all: try rewrite HHPC.
+    all: try solve [rewrite ?Nat.mod_small; lia].
+    - destruct (Nat.eq_dec (Tape.size tape) 2) as [->|]; auto.
+      rewrite Nat.mod_small; easy_lia.
+    - destruct (Tape.head tape); easy_lia.
+    - destruct (Nat.eq_dec (Tape.size tape) 2) as [->|]; auto.
+      + destruct_cmpbs; try easy_lia.
+        rewrite Nat.mod_small; easy_lia.
+    - 
+      
+    all: try solve [rewrite Nat.mod_small; lia]. 
+    all: try solve [destruct (Tape.head tape); simpl; easy_lia].
+    all: try solve [
+               destruct (Nat.eq_dec (Tape.size tape) 2) as [-> |]; simpl; auto;
+               rewrite Nat.mod_small; lia].
+    destruct (Nate.eq_dec
+    destruct (Tape.head tape); try lia.
+    all: try easy_lia.
+    all: rewrite ?HHPC.
+    all: try rewrite Nat.mod_1_l; auto.
+
+  Admitted.
+
+  Lemma step_TapePreCondition : forall tms,
+      let tms' := CTM.step clearer tms in
+      Valid tms -> TapePreCondition (CTM.state tms') (CTM.tape tms').
+  Proof.
+  Admitted.
+  
+  Lemma step_Valid : forall tms, Valid tms -> Valid (CTM.step clearer tms).
+  Proof.
+    intros tms HValid.
+    split.
+    - destruct HValid as [Hsize _].
+      rewrite CTM.step_tape_size; auto with zarith.
+    - auto using step_HeadPreCondition, step_TapePreCondition.
   Qed.
 
   Lemma step_Valid : forall tms, Valid tms -> Valid (CTM.step clearer tms).
