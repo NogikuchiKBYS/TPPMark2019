@@ -5,4 +5,5 @@ Tape.v
 CTM.v
 Clearer.v
 Example.v
+RunExample.v
 ClearerProof.v
