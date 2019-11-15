@@ -28,15 +28,18 @@ Proof.
 Qed.
 
 Module Tape.
-  Class class (A : Type) (V : Type) :=
+  Class ops (A : Type) (V : Type) :=
     {
-      size: A -> nat;
-      head : A -> nat;
       read : A -> V;
       write : V -> A -> A;
       move_right : A -> A;
       move_left : A -> A;
+    }.
 
+  Class spec (A : Type) (V : Type) `{c : ops A V} :=
+    {
+      size: A -> nat;
+      head : A -> nat;
       to_list : A -> list V;
       to_list_size : forall t, size t = length (to_list t);
       head_spec : forall t, size t <> 0 -> head t < size t;
@@ -61,7 +64,7 @@ Module Tape.
                             end
     }.
 
-  Lemma nth_error_Some : forall A V `{class A V} (tape : A) i v,
+  Lemma nth_error_Some : forall A V `{ops A V} `{spec A V} (tape : A) i v,
       nth_error (Tape.to_list tape) i = Some v -> i < Tape.size tape.
   Proof.
     intros until v.
@@ -71,7 +74,7 @@ Module Tape.
     congruence.
   Qed.
 
-  Lemma write_spec : forall A V `{class A V} (tape : A) v i,
+  Lemma write_spec : forall A V `{ops A V} `{spec A V} (tape : A) v i,
       size tape <> 0 ->
       List.nth_error (to_list (write v tape)) i =
       if i =? head tape
@@ -84,7 +87,7 @@ Module Tape.
     - apply write_spec_other; auto.
   Qed.
   
-  Lemma write_size : forall A V `{class A V} (tape : A) (v : V),
+  Lemma write_size : forall A V `{ops A V} `{spec A V} (tape : A) (v : V),
       size tape <> 0 -> 
       size (write v tape) = size tape.
   Proof.
@@ -119,21 +122,21 @@ Module Tape.
   Qed.
 
   
-  Lemma move_left_size : forall A V `{class A V} (tape : A),
+  Lemma move_left_size : forall A V `{ops A V} `{spec A V} (tape : A),
       size (move_left tape) = size tape.
   Proof.
     intros.
     now rewrite !to_list_size, move_left_list.
   Qed.
 
-  Lemma move_right_size : forall A V `{class A V} (tape : A),
+  Lemma move_right_size : forall A V `{ops A V} `{spec A V} (tape : A),
       size (move_right tape) = size tape.
   Proof.
     intros.
     now rewrite !to_list_size, move_right_list.
   Qed.
 
-  Lemma read_write_id : forall A V `{class A V} (tape  : A) (v : V),
+  Lemma read_write_id : forall A V `{ops A V} `{spec A V} (tape  : A) (v : V),
       size tape <> 0 ->
       v = read tape ->
       to_list (write v tape) = to_list tape.
@@ -190,7 +193,7 @@ Module Tape.
   Qed.
              
   
-  Lemma write_replace_at : forall A V `{class A V} (tape : A) (v : V),
+  Lemma write_replace_at : forall A V `{ops A V} `{spec A V} (tape : A) (v : V),
       size tape <> 0 ->
       replace_at (Tape.head tape) (Tape.to_list tape) (Tape.to_list (Tape.write v tape)) v.
   Proof.
@@ -231,7 +234,8 @@ Module Tape.
     destruct eq_dec; simpl; auto.
   Qed.
 
-  Lemma write_count_occ_ge : forall A V `{class A V} (eq_dec : forall x y, {x = y} + {x <> y}) (tape : A) (v : V),
+  Lemma write_count_occ_ge : forall A V `{ops A V} `{spec A V}
+                                    (eq_dec : forall x y, {x = y} + {x <> y}) (tape : A) (v : V),
       size tape <> 0 ->
       List.count_occ eq_dec (to_list tape) v <=
       List.count_occ eq_dec (to_list (Tape.write v tape)) v.
@@ -249,7 +253,7 @@ Module Tape.
       repeat destruct eq_dec; subst; try congruence; auto with arith.
   Qed.
     
-  Lemma write_count_occ_gt : forall A V `{class A V} (eq_dec : forall x y, {x = y} + {x <> y}) (tape : A) (v : V),
+  Lemma write_count_occ_gt : forall A V `{ops A V} `{spec A V} (eq_dec : forall x y, {x = y} + {x <> y}) (tape : A) (v : V),
       size tape <> 0 ->
       read tape <> v ->
       List.count_occ eq_dec (to_list tape) v <

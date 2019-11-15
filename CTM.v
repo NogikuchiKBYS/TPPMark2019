@@ -16,7 +16,8 @@ Module CTM.
     Variable State : Type.
     Context `{Finite.class State}.
     Variable T : Type.
-    Context `{Tape.class T V}.
+    Context `{Tape.ops T V}.
+    Context `{Tape.spec T V}.
     
     Record Machine :=
       {

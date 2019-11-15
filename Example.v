@@ -84,15 +84,20 @@ Module ListTape.
 
 End ListTape.
 
-Instance ListTape_Tape V `{Value.class V} : Tape.class (ListTape.t V) V :=
+Instance ListTape_Tape V `{Value.class V} : Tape.ops (ListTape.t V) V :=
   {|
-    Tape.size := ListTape.size;
-    Tape.head := ListTape.head;
     Tape.read := ListTape.read;
     Tape.write := ListTape.write;
     Tape.move_right := ListTape.move_right;
     Tape.move_left := ListTape.move_left;
+
+  |}.
+
+Instance ListTape_TapeSpec V `{Value.class V} : Tape.spec :=
+  {|
     Tape.to_list := ListTape.to_list;
+    Tape.size := ListTape.size;
+    Tape.head := ListTape.head;
   |}.
 Proof.
   - destruct t. simpl. ssimpl_list. auto.

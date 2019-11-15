@@ -13,7 +13,7 @@ Section Clear.
   Variable V : Type.
   Context `{Value.class V}.
   Variable T : Type.
-  Context `{Tape.class T V}.
+  Context `{Tape.ops T V}.
 
   Inductive State :=
     Init0 | Init1 | Clear | Back | Look | Skip | Finish.

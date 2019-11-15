@@ -14,9 +14,10 @@ Ltac easy_lia := easy || lia.
 
 Section Clear.
   Variable V : Type.
-  Context `{Value.class V}.
+  Context `{ValueClass: Value.class V}.
   Variable T : Type.
-  Context `{Tape.class T V}.
+  Context `{TapeOps: Tape.ops T V}.
+  Context `{TapeSpec: Tape.spec T V}.
   Local Notation clearer := (@clearer V _ _).
 
   Definition measure (tms :CTM.TMState State T) : nat :=
@@ -241,7 +242,7 @@ Section Clear.
       + pose proof (HTPC _ _ Hread') as Hread''.
         destruct (Nat.eqb_spec i 0); try congruence.
         destruct (Nat.eqb_spec 2 (Tape.size tape)) as [Heq|]; simpl in *; auto.
-        * apply Tape.nth_error_Some in Hread'.
+        * apply Tape.nth_error_Some in Hread'; auto.
           easy_lia.
         * destruct (Nat.ltb_spec i 2); easy_lia.
     - destruct (Tape.head tape) as [|h] eqn: Heqh; [right | left];
@@ -334,7 +335,7 @@ Section Clear.
     functional induction (clearer_trans s v); unfold PostCondition in *; simpl in *; auto; unfold measure; simpl;
       try solve [repeat autorewrite with tape; auto; rewrite Tape.read_write_id; auto].
     - repeat autorewrite with tape; auto.
-      pose proof (@Tape.write_count_occ_gt T V _ Value.eq_dec tape Value.zero) as Hgt.
+      pose proof (@Tape.write_count_occ_gt T V _ _ _ Value.eq_dec tape Value.zero) as Hgt.
       cut_hyp Hgt.
       + apply sub_mono.
         split.
