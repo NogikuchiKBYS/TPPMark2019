@@ -247,8 +247,7 @@ Section Clear.
     - destruct (Tape.head tape) as [|h] eqn: Heqh; [right | left];
         intros i v; autorewrite with tape; auto; destruct_cmpbs; simpl in *; try easy_lia;
           intros Hread'%HTPC; subst; simpl in Hread'; destruct_cmpbs; easy_lia.
-    -
-      intros i v Hread'.
+    - intros i v Hread'.
       pose proof (Tape.nth_error_Some _ _ Hread') as Hlti.
       autorewrite with tape in Hread', Hlti; auto.
       destruct (Nat.eqb_spec i (Tape.head tape)) as [Heqi |].
@@ -423,6 +422,9 @@ Section Clear.
     pose proof Value.zero_ne_one as Hzneo.
     intros tms HValid.
     destruct tms as [tape state].
+    assert (Tape.size tape <> 0) as Hnonempty. {
+      unfold Valid in *. simpl in *. auto with zarith.
+    }
     simpl in *.
     destruct state as [state | ]; auto.
     destruct state; try solve [ exists 1; simpl; solve_trans Value.zero].
@@ -438,42 +440,24 @@ Section Clear.
       simpl in Heqtms'.
       destruct Value.eq_dec in Heqtms'.
       + exists 1, (Some Back).
-        rewrite CTM.steps_1, <- Heqtms'def, Heqtms'.
-        simpl.
-        repeat split; try congruence.
-        solve_trans1.
+        rewrite CTM.steps_1, <- Heqtms'def, Heqtms'. simpl.
+        repeat split; try congruence. solve_trans1.
       + pose proof (step_Valid HValid) as HValid'.
-        unfold Valid, HeadPreCondition, TapePreCondition in HValid; rewrite Heqtms in HValid; simpl in *.
+        unfold Valid, HeadPreCondition, TapePreCondition in HValid;
+          rewrite Heqtms in HValid; simpl in *.
         destruct HValid as (Hsize & Hhead & Hi).
         destruct (Nat.eq_dec h (sz - 1)).
         * specialize (IH 0).
           exists 2.
-          simpl.
-          rewrite <- Heqtms'def, Heqtms'.
-          simpl.
+          simpl. rewrite <- Heqtms'def, Heqtms'. simpl.
           destruct Value.eq_dec; simpl; try discriminate.
           -- exists (Some Back).
-             repeat split; try congruence.
-             solve_trans1.
+             repeat split; try congruence. solve_trans1.
           -- exfalso.
-             remember (Tape.move_right (Tape.write Value.zero tape)) as tape' eqn: Heqtape'.
-             pose proof (Value.zero_ne_one); try congruence.
-             pose proof (Tape.read_spec tape') as Hread.
-             rewrite <- Heqtms'def, Heqtms' in HValid'.
-             unfold Valid, HeadPreCondition, TapePreCondition in HValid'; simpl in HValid'.
-             destruct HValid' as (Hsize' & Hhead' & Hi').
-             cut_hyp Hread; auto with zarith.
-             assert (Tape.head tape' = 0) as Heq. {
-               rewrite Heqtape'.
-               repeat autorewrite with tape; auto with zarith.
-               rewrite <- Heqh.
-               subst.
-               destruct_cmpbs.
-             }
-             rewrite Heq in *.
-             apply Hi' in Hread.
-             simpl in Hread.
-             congruence.
+             pose proof (Tape.read_spec (Tape.move_right (Tape.write Value.zero tape))) as Hread'.
+             autorewrite with tape in Hread'; autorewrite with tape; try congruence.
+             destruct_cmpbs.
+             apply Hi in Hread'; congruence.
         * assert (Tape.head (CTM.tape tms') = S h) as Hheadeq. {
             rewrite Heqtms'.
             simpl.
@@ -485,33 +469,23 @@ Section Clear.
           -- specialize (IH (CTM.tape tms')).
              destruct IH as [k IHk]; auto.
              ++ rewrite <- Heqtms'def in HValid'.
-               clear Heqtms'def.
-               subst.
-               simpl in *.
-               assumption.
-             ++ subst.
-               simpl.
-               destruct Value.eq_dec; try congruence.
-               simpl.
-               repeat autorewrite with tape; auto with zarith.
+                clear Heqtms'def. subst. simpl in *.
+                assumption.
+             ++ subst. simpl. destruct Value.eq_dec; try congruence. simpl.
+                repeat autorewrite with tape; auto with zarith.
              ++ exists (S k).
-               simpl.
-               rewrite <- Heqtms'def. clear Heqtms'def.
-               subst.
-               simpl in *.
-               assumption.
+                simpl. rewrite <- Heqtms'def. clear Heqtms'def. subst. simpl in *.
+                assumption.
           -- split; auto.
-             rewrite <- Hheadeq, Heqtms'.
-             simpl.
-             subst.
+             rewrite <- Hheadeq, Heqtms'. simpl. subst.
              repeat autorewrite with tape; auto with zarith.
              destruct_cmpbs.
              apply Nat.lt_le_incl.
              pose proof (Tape.head_spec tape).
              auto with zarith.
     - remember (Tape.head tape) as h.
-      revert tape HValid Heqh.
-      induction h as [|h]; intros tape HValid Heqh.
+      revert tape Hnonempty HValid Heqh.
+      induction h as [|h]; intros tape Hnonempty HValid Heqh.
       + unfold Valid, HeadPreCondition, TapePreCondition in HValid; simpl in HValid.
         exists 1, (Some Look).
         easy_lia.
@@ -525,22 +499,13 @@ Section Clear.
           simpl.
           destruct Value.eq_dec; simpl; try congruence.
           -- exfalso.
-             unfold Valid, HeadPreCondition, TapePreCondition in HValid; rewrite Htms in *; simpl in HValid.
-             rewrite <- Heqh in *.
+             unfold Valid, HeadPreCondition, TapePreCondition in HValid; rewrite Htms in *;
+               simpl in HValid.
+             unfold zero_except_ix1 in HValid.
              pose proof Value.zero_ne_one.
              pose proof (Tape.read_spec tape) as Hread.
-             cut_hyp Hread; auto with zarith.
-             cut (nth_error (Tape.to_list tape) 1 = Some Value.one); try congruence.
-             unfold zero_except_ix1 in HValid.
-             destruct HValid as (Hsize & _ & [HNC | HNC]).
-             ++ apply NthCondition_elem with (i := 1) in HNC.
-               ** destruct HNC as (v & Hnth & Hv).
-                  congruence.
-               ** now rewrite <- Tape.to_list_size.
-             ++ apply NthCondition_elem with (i := 1) in HNC.
-               ** destruct HNC as (v & Hnth & Hv).
-                  congruence.
-               ** now rewrite <- Tape.to_list_size.
+             destruct HValid as (_ & _ & [HNC | HNC]); apply HNC in Hread; auto;
+               rewrite <- Heqh, Nat.eqb_refl, ?orb_true_r in Hread; congruence.
           -- exists (Some Look).
              repeat split; try congruence || solve_trans1.
         * pose proof (step_Valid HValid) as HValid'.
@@ -549,34 +514,25 @@ Section Clear.
           simpl in Heqtms'.
           destruct Value.eq_dec.
           -- destruct IHh as [n Hn].
-             ++ subst.
-               now simpl.
-             ++ subst.
-               simpl CTM.tape.
-               rewrite Tape.move_left_head.
-               ** rewrite Tape.write_head.
-                  now rewrite <- Heqh.
-               ** unfold Valid in HValid.
-                  simpl in HValid.
-                  rewrite Tape.write_size; auto with zarith.
+             ++ subst. simpl. now autorewrite with tape.
+             ++ subst. now simpl.
+             ++ subst. simpl CTM.tape. rewrite Tape.move_left_head.
+                ** rewrite Tape.write_head.
+                   now rewrite <- Heqh.
+                ** unfold Valid in HValid.
+                   simpl in HValid.
+                   rewrite Tape.write_size; auto with zarith.
              ++ exists (S n).
-               rewrite <- Htms.
-               simpl CTM.steps.
-               rewrite Htms.
-               simpl.
-               destruct Value.eq_dec; try congruence.
-               subst.
-               assumption.
+                rewrite <- Htms. simpl CTM.steps. rewrite Htms. simpl.
+                destruct Value.eq_dec; try congruence.
+                subst. assumption.
           -- unfold Valid, HeadPreCondition, TapePreCondition in HValid; simpl in HValid.
              cut (Tape.read tape = Value.zero); try congruence.
              pose proof (Tape.read_spec tape) as Hread.
              cut_hyp Hread; auto with zarith.
              rewrite <- Heqh in *.
-             destruct HValid as (Hlen & _ & [Hi | Hi]).
-             ++ apply Hi in Hread.
-               destruct_cmpbs; easy_lia.
-             ++ apply Hi in Hread.
-               destruct_cmpbs.
+             destruct HValid as (_ & _ & [Hi | Hi]); apply Hi in Hread; auto.
+             destruct_cmpbs. easy_lia.
     - exists 1.
       simpl.
       destruct Value.eq_dec; simpl.
